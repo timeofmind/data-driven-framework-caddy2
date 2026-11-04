@@ -2,12 +2,10 @@ module github.com/timeofmind/data-driven-framework-caddy2
 
 go 1.26.0
 
-replace github.com/timeofmind/data-driven-framework-go => ../data-driven-framework-go
-
 require (
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/muktihari/fit v0.28.5
-	github.com/timeofmind/data-driven-framework-go v0.0.0
+	github.com/timeofmind/data-driven-framework-go v0.1.0
 )
 
 require (
