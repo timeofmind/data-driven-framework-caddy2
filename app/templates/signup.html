@@ -1,0 +1,13 @@
+{{define "content"}}{{$d := .Data}}
+<div class="card narrow">
+  <h1>Create your account</h1>
+  <p class="muted">Plan your training, log every session, and join virtual events. Free.</p>
+  {{if $d.Message}}<p class="alert">{{$d.Message}}</p>{{end}}
+  <form method="post" action="{{.Base}}/signup" class="form">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    {{range $d.Fields}}{{template "field" .}}{{end}}
+    <div class="actions"><button class="btn" type="submit">Create account</button></div>
+  </form>
+  <p class="muted">Already have an account? <a href="{{.Base}}/login">Sign in</a>.</p>
+</div>
+{{end}}
