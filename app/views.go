@@ -7,10 +7,11 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
-	"math"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -23,34 +24,30 @@ import (
 //go:embed templates/*.html static/*
 var embedded embed.FS
 
-var pageNames = []string{"home", "list", "calendar", "detail", "form", "confirm", "login", "signup", "import", "error"}
+var pageNames = []string{"home", "list", "calendar", "detail", "form", "confirm", "login", "signup", "upload", "error"}
 
 type views struct {
-	pages  map[string]*template.Template
-	static map[string][]byte
+	pages     map[string]*template.Template
+	staticDir string // the theme's static/ directory ("" = use the built-in default)
 }
 
-// loadViews parses the embedded templates; files in overrideDir with the same
-// names (layout.html, list.html, …, style.css) replace the built-in ones.
-func loadViews(overrideDir string) (*views, error) {
+// loadViews parses templates. components.html (generic, schema-driven
+// fragments) is built in; layout.html and the page templates come from the
+// app's theme directory when it has them, else from the built-in default theme.
+func loadViews(themeDir string) (*views, error) {
 	read := func(name string) ([]byte, error) {
-		if overrideDir != "" {
-			sub := "templates"
-			if strings.HasSuffix(name, ".css") {
-				sub = "static"
+		if themeDir != "" {
+			if b, err := os.ReadFile(filepath.Join(themeDir, name)); err == nil {
+				return b, nil
 			}
-			for _, p := range []string{filepath.Join(overrideDir, name), filepath.Join(overrideDir, sub, name)} {
-				if b, err := os.ReadFile(p); err == nil {
-					return b, nil
-				}
-			}
-		}
-		if strings.HasSuffix(name, ".css") {
-			return fs.ReadFile(embedded, "static/"+name)
 		}
 		return fs.ReadFile(embedded, "templates/"+name)
 	}
-	v := &views{pages: map[string]*template.Template{}, static: map[string][]byte{}}
+	v := &views{pages: map[string]*template.Template{}}
+	comps, err := fs.ReadFile(embedded, "templates/components.html")
+	if err != nil {
+		return nil, err
+	}
 	layout, err := read("layout.html")
 	if err != nil {
 		return nil, err
@@ -61,19 +58,21 @@ func loadViews(overrideDir string) (*views, error) {
 			return nil, err
 		}
 		t := template.New("layout").Funcs(funcs)
-		if _, err := t.Parse(string(layout)); err != nil {
-			return nil, fmt.Errorf("layout.html: %w", err)
-		}
-		if _, err := t.Parse(string(body)); err != nil {
-			return nil, fmt.Errorf("%s.html: %w", name, err)
+		for _, part := range []struct {
+			name string
+			src  []byte
+		}{{"components.html", comps}, {"layout.html", layout}, {name + ".html", body}} {
+			if _, err := t.Parse(string(part.src)); err != nil {
+				return nil, fmt.Errorf("%s: %w", part.name, err)
+			}
 		}
 		v.pages[name] = t
 	}
-	css, err := read("style.css")
-	if err != nil {
-		return nil, err
+	if themeDir != "" {
+		if st, err := os.Stat(filepath.Join(themeDir, "static")); err == nil && st.IsDir() {
+			v.staticDir = filepath.Join(themeDir, "static")
+		}
 	}
-	v.static["style.css"] = css
 	return v, nil
 }
 
@@ -91,7 +90,7 @@ type page struct {
 	P       *runtime.Principal
 	CSRF    string
 	Nav     []link
-	Import  bool
+	Upload  *link // the upload page, when the app has one and the viewer is signed in
 	Signup  bool
 	Data    any
 	Path    string
@@ -106,9 +105,9 @@ type link struct {
 func (a *App) render(rq *request, name, title string, data any) {
 	t := a.views.pages[name]
 	pg := page{
-		Site: a.cfg.SiteName, Tagline: a.cfg.Tagline, Title: title, Base: a.cfg.BasePath,
-		P: rq.p, CSRF: rq.csrf, Nav: a.nav(rq), Import: a.cfg.Import.enabled() && rq.p != nil,
-		Signup: a.cfg.AllowSignup && a.auth != nil, Data: data, Path: rq.r.URL.Path,
+		Site: a.man.Name, Tagline: a.man.Tagline, Title: title, Base: a.cfg.BasePath,
+		P: rq.p, CSRF: rq.csrf, Nav: a.nav(rq), Signup: a.man.signupEnabled() && a.auth != nil, Upload: a.uploadLink(rq),
+		Data: data, Path: rq.r.URL.Path,
 	}
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", pg); err != nil {
@@ -121,13 +120,36 @@ func (a *App) render(rq *request, name, title string, data any) {
 	rq.w.Write(buf.Bytes())
 }
 
+func (a *App) uploadLink(rq *request) *link {
+	if a.uploads == nil || rq.p == nil {
+		return nil
+	}
+	return &link{Label: firstNonEmpty(a.man.Uploads.Title, "Upload"), URL: a.url("/upload")}
+}
+
+// static serves the theme's static/ files (or the default theme's).
 func (a *App) static(rq *request, name string) {
-	b, ok := a.views.static[name]
-	if !ok {
+	clean := path.Clean("/" + name)[1:]
+	if clean == "" || strings.HasPrefix(clean, ".") || strings.Contains(clean, "/.") {
 		http.NotFound(rq.w, rq.r)
 		return
 	}
-	rq.w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	var b []byte
+	var err error
+	if a.views.staticDir != "" {
+		b, err = os.ReadFile(filepath.Join(a.views.staticDir, filepath.FromSlash(clean)))
+	} else {
+		b, err = fs.ReadFile(embedded, "static/"+clean)
+	}
+	if err != nil {
+		http.NotFound(rq.w, rq.r)
+		return
+	}
+	ct := mime.TypeByExtension(path.Ext(clean))
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	rq.w.Header().Set("Content-Type", ct)
 	rq.w.Header().Set("Cache-Control", "public, max-age=3600")
 	rq.w.Write(b)
 }
@@ -135,8 +157,15 @@ func (a *App) static(rq *request, name string) {
 // nav lists the top-level classes: those not governed by a parent and not join tables.
 func (a *App) nav(rq *request) []link {
 	var out []link
-	for _, c := range a.Model.ConcreteClasses() {
-		if !a.navigable(c) {
+	classes := a.Model.ConcreteClasses()
+	if len(a.man.Nav) > 0 {
+		classes = classes[:0:0]
+		for _, n := range a.man.Nav {
+			classes = append(classes, a.Model.Class(n))
+		}
+	}
+	for _, c := range classes {
+		if len(a.man.Nav) == 0 && !a.navigable(c) {
 			continue
 		}
 		u := a.classURL(c)
@@ -205,16 +234,16 @@ func (a *App) listColumns(c *model.Class, skip string) []column {
 		}
 		if rel := c.BelongsToVia(s.Name); rel != nil {
 			if t := a.Model.Class(rel.Target); t != nil && t.Auth != nil && s.Name != owner && owner != "" {
-				continue // e.g. a second athlete FK duplicating the owner
+				continue // a second FK to the principal class duplicating the owner column
 			}
 			cols = append(cols, column{slot: s, rel: rel})
 			continue
 		}
-		if s.Hidden || s.ReadOnly && s.Name != "created_at" || s.Autogenerated {
+		if s.Hidden || s.ReadOnly || s.Autogenerated {
 			continue
 		}
-		if s.Name == "visibility" {
-			continue
+		if c.Access != nil && c.Access.PublicWhen[s.Name] != "" {
+			continue // the access slot shows as the record's public/private state
 		}
 		cols = append(cols, column{slot: s})
 	}
@@ -381,41 +410,10 @@ func (a *App) detailFields(ctx context.Context, p *runtime.Principal, r *runtime
 			out[len(out)-1].Class = "prose"
 		}
 	}
-	if pace := paceField(r); pace != nil {
-		out = append(out, *pace)
+	for _, cv := range runtime.Computed(r) {
+		out = append(out, field{Label: cv.Label, Text: cv.Text, Class: "num"})
 	}
 	return out, nil
-}
-
-// paceField derives pace (and speed) for records with a distance and a time.
-func paceField(r *runtime.Record) *field {
-	var dist float64
-	if r.Class.HasSlot("distance_km") {
-		dist = r.Float("distance_km")
-	}
-	var secs float64
-	for _, n := range []string{"moving_time", "duration", "elapsed_time"} {
-		if r.Class.HasSlot(n) && r.Int(n) > 0 {
-			secs = float64(r.Int(n))
-			break
-		}
-	}
-	if dist <= 0 || secs <= 0 {
-		return nil
-	}
-	sport := ""
-	if r.Class.HasSlot("sport") {
-		sport = r.String("sport")
-	}
-	if sport == "ride" {
-		return &field{Label: "Average speed", Text: fmt.Sprintf("%.1f km/h", dist/(secs/3600)), Class: "num"}
-	}
-	if sport == "swim" {
-		per100 := secs / (dist * 10)
-		return &field{Label: "Pace", Text: runtime.FormatDuration(int64(math.Round(per100))) + " /100m", Class: "num"}
-	}
-	perKm := secs / dist
-	return &field{Label: "Pace", Text: runtime.FormatDuration(int64(math.Round(perKm))) + " /km", Class: "num"}
 }
 
 // formField is one input in a generated form.
@@ -518,7 +516,7 @@ func (a *App) formFor(ctx context.Context, p *runtime.Principal, c *model.Class,
 }
 
 // relationOptions lists records that p may link to through FK slot. Targets
-// with an owner are limited to p's own rows (you link your own activity to a
+// with an owner are limited to p's own rows (you link your own records to a
 // result, not someone else's); others to rows p can read.
 func (a *App) relationOptions(ctx context.Context, p *runtime.Principal, c *model.Class, slot string, current int64) ([]option, error) {
 	rel := c.BelongsToVia(slot)

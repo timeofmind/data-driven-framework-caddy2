@@ -37,14 +37,17 @@ func (a *App) home(rq *request) error {
 	}
 	var sections []homeSection
 	today := time.Now().Format("2006-01-02")
-	for _, c := range a.homeClasses() {
+	for _, hs := range a.homeSections() {
+		c := a.Model.Class(hs.Class)
 		h := a.Reg.MustClass(c.Name)
-		q := runtime.Query{Limit: 5}
-		mine := rq.p != nil && ownerOf(c) != "" && c.Calendar != "" && c.Name != a.cfg.Import.Registration
-		if mine && strings.Contains(strings.ToLower(c.Name), "event") {
-			mine = false // events are shared: show everyone's upcoming ones
+		if hs.Mine && (rq.p == nil || ownerOf(c) == "") {
+			continue
 		}
-		if mine {
+		q := runtime.Query{Limit: hs.Limit}
+		if q.Limit <= 0 {
+			q.Limit = 5
+		}
+		if hs.Mine {
 			q.Where = append(q.Where, runtime.Eq(ownerOf(c), rq.p.ID))
 		}
 		q, ok := h.Scope(q, rq.p)
@@ -62,16 +65,13 @@ func (a *App) home(rq *request) error {
 		if err != nil {
 			return err
 		}
-		label := plural(c.EffectiveLabel())
 		u := a.classURL(c)
-		switch {
-		case mine:
-			label = "Your " + strings.ToLower(label)
+		if hs.Mine {
 			u += "?mine=1"
-		case c.Calendar != "" && len(recs) > 0 && recs[0].String(c.Calendar) >= today:
-			label = "Upcoming " + strings.ToLower(label)
-		default:
-			label = "Recent " + strings.ToLower(label)
+		}
+		label := hs.Title
+		if label == "" {
+			label = plural(c.EffectiveLabel())
 		}
 		sections = append(sections, homeSection{Label: label, URL: u, Table: t})
 	}
@@ -79,21 +79,16 @@ func (a *App) home(rq *request) error {
 	return nil
 }
 
-// homeClasses returns the classes shown on the home page: Config.HomeClasses,
-// else every navigable class with a calendar slot.
-func (a *App) homeClasses() []*model.Class {
-	var out []*model.Class
-	if len(a.cfg.HomeClasses) > 0 {
-		for _, n := range a.cfg.HomeClasses {
-			if c := a.Model.Class(n); c != nil && c.PKSlot() != nil {
-				out = append(out, c)
-			}
-		}
-		return out
+// homeSections returns the manifest's home sections, or by default one per
+// top-level class with a calendar slot.
+func (a *App) homeSections() []HomeSection {
+	if len(a.man.Home) > 0 {
+		return a.man.Home
 	}
+	var out []HomeSection
 	for _, c := range a.Model.ConcreteClasses() {
 		if a.navigable(c) && c.Calendar != "" {
-			out = append(out, c)
+			out = append(out, HomeSection{Class: c.Name})
 		}
 	}
 	return out
@@ -345,8 +340,8 @@ func (a *App) detail(rq *request) error {
 			d.Children = append(d.Children, *ch)
 		}
 	}
-	if d.IsMe && a.cfg.Import.enabled() {
-		d.Actions = append(d.Actions, link{Label: "Upload watch data", URL: a.url("/import")})
+	if d.IsMe && a.uploads != nil {
+		d.Actions = append(d.Actions, link{Label: firstNonEmpty(a.man.Uploads.Title, "Upload"), URL: a.url("/upload")})
 	}
 	a.render(rq, "detail", d.Title, d)
 	return nil
@@ -369,12 +364,7 @@ func (a *App) childSection(rq *request, parent *runtime.Record, rel *model.Relat
 	if err != nil {
 		return nil, err
 	}
-	ranked := false
-	if f := strings.Fields(rel.OrderBy); len(f) > 0 && (len(f) == 1 || strings.EqualFold(f[1], "asc")) {
-		if s := h.Class.Slot(f[0]); s != nil && s.Type == "duration" {
-			ranked = true
-		}
-	}
+	ranked := rel.Rank != nil
 	q.Limit = 50
 	if ranked {
 		q.Limit = 1000
@@ -383,14 +373,14 @@ func (a *App) childSection(rq *request, parent *runtime.Record, rel *model.Relat
 	if err != nil {
 		return nil, err
 	}
-	// Children ordered by a duration, fastest first, are a leaderboard: one row
-	// (the best) per owner, with places.
-	if ranked && ownerOf(h.Class) != "" {
-		seen := map[int64]bool{}
+	// A ranked relationship is a leaderboard: numbered, and with best_per only
+	// the first (best, by order_by) row per value of that slot.
+	if ranked && rel.Rank.BestPer != "" {
+		seen := map[string]bool{}
 		best := recs[:0:0]
 		for _, r := range recs {
-			if o := r.Int(ownerOf(h.Class)); !seen[o] {
-				seen[o] = true
+			if k := r.String(rel.Rank.BestPer); !seen[k] {
+				seen[k] = true
 				best = append(best, r)
 			}
 		}
@@ -414,20 +404,16 @@ func (a *App) childSection(rq *request, parent *runtime.Record, rel *model.Relat
 		ch.More = fmt.Sprintf("%s?%s=%d", a.classURL(h.Class), via, parent.ID())
 	}
 	// "Add" is offered when the viewer may create the child and link it here:
-	// children with their own owner (registrations, results) need only read
-	// access to the parent; ownerless children (laps) need write access.
+	// children with their own owner need only read access to the parent;
+	// ownerless children need write access to it.
 	// Profile pages (the auth class) only list; records are added elsewhere.
 	profile := parent.Class.Auth != nil
 	canLink := parentWritable || (ownerOf(h.Class) != "" && rq.p != nil)
 	if !profile && canLink && runtime.CanCreate(h.Class, rq.p) && !a.alreadyHasOne(rq, h, via, parent.ID()) {
 		ch.AddURL = fmt.Sprintf("%s/new?%s=%d", a.classURL(h.Class), via, parent.ID())
-		ch.AddLbl = "Add " + strings.ToLower(h.Class.EffectiveLabel())
-		if strings.Contains(strings.ToLower(h.Class.Name), "registration") {
-			ch.AddLbl = "Register"
-			// Convention: a parent with registration_open = false takes no sign-ups.
-			if parent.Class.HasSlot("registration_open") && !parent.Bool("registration_open") {
-				ch.AddURL = ""
-			}
+		ch.AddLbl = firstNonEmpty(rel.AddLabel, "Add "+strings.ToLower(h.Class.EffectiveLabel()))
+		if !runtime.AddAllowed(rel, parent) {
+			ch.AddURL = ""
 		}
 	}
 	if len(recs) == 0 {
@@ -498,7 +484,6 @@ func (a *App) create(rq *request) error {
 				}
 				errs = fe
 			} else {
-				a.afterSave(rq, rec)
 				http.Redirect(rq.w, rq.r, a.recordURL(c, rec.ID()), http.StatusSeeOther)
 				return nil
 			}
@@ -546,7 +531,6 @@ func (a *App) edit(rq *request) error {
 				}
 				errs = fe
 			} else {
-				a.afterSave(rq, rec)
 				http.Redirect(rq.w, rq.r, a.recordURL(c, rec.ID()), http.StatusSeeOther)
 				return nil
 			}
@@ -602,7 +586,10 @@ func (a *App) remove(rq *request) error {
 		}
 	}
 	if c.Auth != nil {
-		msg = "Delete your account? Everything you have created — plans, workouts, activities, events and results — will be permanently deleted."
+		msg = "Delete your account? This cannot be undone."
+		if len(cascades) > 0 {
+			msg += " Your " + strings.Join(cascades, ", ") + " will be permanently deleted too."
+		}
 	} else if len(cascades) > 0 {
 		msg += " Its " + strings.Join(cascades, ", ") + " will be deleted too."
 	}
@@ -646,7 +633,19 @@ func (a *App) applyForm(rq *request, rec *runtime.Record, include ...string) run
 			in[c.Auth.Login] = strings.ToLower(strings.TrimSpace(v))
 		}
 	}
-	return rec.Assign(in, ownerOf(c))
+	errs := rec.Assign(in, ownerOf(c))
+	if errs == nil {
+		return nil
+	}
+	// Report every problem at once: add rule violations for the fields that did convert.
+	for k, v := range rec.Validate() {
+		if _, seen := errs[k]; !seen && k != ownerOf(c) {
+			if _, posted := in[k]; posted {
+				errs[k] = v
+			}
+		}
+	}
+	return errs
 }
 
 // saveChecked fills the owner, verifies every FK points at something the
@@ -704,19 +703,6 @@ func (a *App) checkLinks(ctx context.Context, p *runtime.Principal, rec *runtime
 		return nil
 	}
 	return errs
-}
-
-// afterSave applies small cross-record conventions after a form save.
-func (a *App) afterSave(rq *request, rec *runtime.Record) {
-	// Linking an activity to a planned workout marks the workout completed.
-	if rel := rec.Class.BelongsToVia("planned_workout_id"); rel != nil && rec.Int("planned_workout_id") != 0 {
-		if h, err := a.Reg.Class(rel.Target); err == nil {
-			if pw, err := h.Load(rq.ctx(), rec.Int("planned_workout_id")); err == nil && pw.Class.HasSlot("status") && pw.String("status") == "planned" {
-				pw.Set("status", "completed")
-				h.Save(rq.ctx(), pw)
-			}
-		}
-	}
 }
 
 func friendlyDBError(err error) error {
@@ -820,19 +806,14 @@ func (a *App) fillCalendar(rq *request, weeks [][]calDay, h *runtime.Handle, ext
 		if len(d) > 10 {
 			d = d[:10]
 		}
-		ic := cls
-		for _, n := range []string{"status", "sport"} {
-			if c.HasSlot(n) && r.String(n) != "" {
-				ic += " " + n + "-" + r.String(n)
+		// Every enum value becomes a CSS class (<slot>-<value>) for the theme to style.
+		ic := cls + " class-" + strings.ToLower(c.Name)
+		for _, s := range c.AllSlots() {
+			if s.Type == "enum" && r.String(s.Name) != "" {
+				ic += " " + s.Name + "-" + r.String(s.Name)
 			}
 		}
-		text := r.Title()
-		if c.HasSlot("distance_km") && r.Float("distance_km") > 0 {
-			text += fmt.Sprintf(" · %s km", runtime.DisplayValue(c.Slot("distance_km"), r.Get("distance_km")))
-		} else if c.HasSlot("target_distance_km") && r.Float("target_distance_km") > 0 {
-			text += fmt.Sprintf(" · %s km", runtime.DisplayValue(c.Slot("target_distance_km"), r.Get("target_distance_km")))
-		}
-		byDate[d] = append(byDate[d], calItem{Text: text, URL: a.recordURL(c, r.ID()), Class: ic})
+		byDate[d] = append(byDate[d], calItem{Text: runtime.CalendarText(r), URL: a.recordURL(c, r.ID()), Class: ic})
 	}
 	for wi := range weeks {
 		for di := range weeks[wi] {
@@ -985,7 +966,7 @@ func (a *App) signup(rq *request) error {
 		}
 		fields = append(fields, ff)
 	}
-	a.render(rq, "signup", "Create your account", map[string]any{"Fields": fields, "Message": generalError(errs)})
+	a.render(rq, "signup", "Create your account", map[string]any{"Fields": fields, "Message": generalError(errs), "Intro": a.man.Signup.Intro})
 	return nil
 }
 
@@ -1011,7 +992,7 @@ func (a *App) login(rq *request) error {
 		if !errors.Is(err, runtime.ErrBadCredentials) {
 			return err
 		}
-		msg = "That email and password don't match an account."
+		msg = "That " + strings.ToLower(a.auth.Class.Slot(au.Login).EffectiveLabel()) + " and password don't match an account."
 	}
 	label := a.auth.Class.Slot(au.Login).EffectiveLabel()
 	a.render(rq, "login", "Sign in", map[string]any{"Message": msg, "Next": next, "LoginLabel": label, "Login": rq.r.PostFormValue("login")})

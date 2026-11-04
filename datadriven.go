@@ -1,12 +1,14 @@
-// Package datadriven is a Caddy v2 HTTP handler that serves a complete web
-// application — pages, forms, calendars, a JSON API, accounts and file
-// uploads — generated at runtime from a data-driven-framework-go YAML schema.
+// Package datadriven is a Caddy v2 HTTP handler that runs a data-driven
+// application. The handler is app-agnostic: an application is a directory —
+// its app.yaml manifest, its schema (structure, rules and behaviour, in
+// data-driven-framework-go YAML) and its theme (page layout and styling) —
+// and the handler serves pages, forms, calendars, accounts, a JSON API and
+// file uploads from it.
 //
 //	example.com {
 //		datadriven {
-//			schema   /etc/myapp/schema.yaml
-//			database mysql {env.MYAPP_DSN}
-//			site_name "My App"
+//			app           /srv/myapp
+//			database_file mysql /etc/myapp/database.dsn
 //		}
 //	}
 package datadriven
@@ -36,35 +38,23 @@ func init() {
 
 // Handler is the http.handlers.datadriven module.
 type Handler struct {
-	// Schema files, merged in order.
-	Schema []string `json:"schema"`
+	// App is the application directory (app.yaml, schema files, theme).
+	App string `json:"app"`
 	// Driver is "mysql" (MySQL/MariaDB) or "sqlite".
 	Driver string `json:"driver,omitempty"`
 	// DSN is the database DSN; DSNFile reads it from a file (preferred for secrets).
 	DSN     string `json:"dsn,omitempty"`
 	DSNFile string `json:"dsn_file,omitempty"`
-
-	SiteName string   `json:"site_name,omitempty"`
-	Tagline  string   `json:"tagline,omitempty"`
-	Home     []string `json:"home,omitempty"`
 	// BasePath mounts the app below a path prefix ("" = site root).
 	BasePath string `json:"base_path,omitempty"`
-	// Signup enables public account creation (default true).
-	Signup *bool `json:"signup,omitempty"`
 	// Admins are login values (e.g. emails) with full access.
 	Admins []string `json:"admins,omitempty"`
-	// SecureCookies marks cookies Secure (default true; turn off only for plain-HTTP testing).
-	SecureCookies   *bool          `json:"secure_cookies,omitempty"`
-	SessionTTL      caddy.Duration `json:"session_ttl,omitempty"`
-	DefaultTimezone string         `json:"timezone,omitempty"`
-
+	// SecureCookies marks cookies Secure (default true; off only for plain-HTTP testing).
+	SecureCookies *bool          `json:"secure_cookies,omitempty"`
+	SessionTTL    caddy.Duration `json:"session_ttl,omitempty"`
+	// UploadDir keeps original uploaded files; MaxUploadBytes limits each file.
 	UploadDir      string `json:"upload_dir,omitempty"`
 	MaxUploadBytes int64  `json:"max_upload_bytes,omitempty"`
-
-	Import app.ImportConfig `json:"import,omitempty"`
-
-	// Templates is a directory of template/CSS overrides.
-	Templates string `json:"templates,omitempty"`
 
 	app *app.App
 }
@@ -77,7 +67,7 @@ func (Handler) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-// Provision loads the schema and connects to the database.
+// Provision loads the application and connects to the database.
 func (h *Handler) Provision(ctx caddy.Context) error {
 	dsn := h.DSN
 	if h.DSNFile != "" {
@@ -87,26 +77,17 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		}
 		dsn = strings.TrimSpace(string(b))
 	}
-	repl := caddy.NewReplacer()
-	dsn = repl.ReplaceKnown(dsn, "")
 	cfg := app.Config{
-		SchemaFiles:     h.Schema,
-		Driver:          h.Driver,
-		DSN:             dsn,
-		SiteName:        h.SiteName,
-		Tagline:         h.Tagline,
-		HomeClasses:     h.Home,
-		BasePath:        h.BasePath,
-		AllowSignup:     h.Signup == nil || *h.Signup,
-		Admins:          h.Admins,
-		SecureCookies:   h.SecureCookies == nil || *h.SecureCookies,
-		SessionTTL:      time.Duration(h.SessionTTL),
-		DefaultTimezone: h.DefaultTimezone,
-		UploadDir:       h.UploadDir,
-		MaxUploadBytes:  h.MaxUploadBytes,
-		Import:          h.Import,
-		TemplateDir:     h.Templates,
-		Logger:          ctx.Slogger(),
+		AppDir:         h.App,
+		Driver:         h.Driver,
+		DSN:            caddy.NewReplacer().ReplaceKnown(dsn, ""),
+		BasePath:       h.BasePath,
+		Admins:         h.Admins,
+		SecureCookies:  h.SecureCookies == nil || *h.SecureCookies,
+		SessionTTL:     time.Duration(h.SessionTTL),
+		UploadDir:      h.UploadDir,
+		MaxUploadBytes: h.MaxUploadBytes,
+		Logger:         ctx.Slogger(),
 		ClientIP: func(r *http.Request) string {
 			if v, ok := caddyhttp.GetVar(r.Context(), caddyhttp.ClientIPVarKey).(string); ok {
 				return v
@@ -126,11 +107,11 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 
 // Validate checks the configuration.
 func (h *Handler) Validate() error {
-	if len(h.Schema) == 0 {
-		return fmt.Errorf("datadriven: schema is required")
+	if h.App == "" {
+		return fmt.Errorf("datadriven: app directory is required")
 	}
 	if h.DSN == "" && h.DSNFile == "" {
-		return fmt.Errorf("datadriven: database DSN is required")
+		return fmt.Errorf("datadriven: database is required")
 	}
 	return nil
 }
@@ -143,7 +124,7 @@ func (h *Handler) Cleanup() error {
 	return nil
 }
 
-// ServeHTTP serves app paths and passes everything else to the next handler.
+// ServeHTTP serves the application's paths and passes everything else on.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	if h.app.Handle(w, r) {
 		return nil
@@ -154,48 +135,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 // UnmarshalCaddyfile parses:
 //
 //	datadriven [<base_path>] {
-//		schema <file...>
+//		app <directory>
 //		database <mysql|sqlite> <dsn>
 //		database_file <mysql|sqlite> <path-to-file-holding-dsn>
-//		site_name <name>
-//		tagline <text>
-//		home <Class...>
-//		signup on|off
 //		admin <login...>
 //		secure_cookies on|off
 //		session_ttl <duration>
-//		timezone <IANA zone>
-//		uploads <dir> [<max size, e.g. 25MB>]
-//		templates <dir>
-//		activity_import {
-//			activity <Class>
-//			lap <Class>
-//			match <Class>
-//			registration <Class>
-//			result <Class>
-//		}
+//		uploads <dir> [<max size per file, e.g. 25MB>]
 //	}
 func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // directive name
 	if d.NextArg() {
 		h.BasePath = d.Val()
 	}
-	onOff := func() (*bool, error) {
-		if !d.NextArg() {
-			return nil, d.ArgErr()
-		}
-		v := d.Val() == "on" || d.Val() == "true" || d.Val() == "yes"
-		if !v && d.Val() != "off" && d.Val() != "false" && d.Val() != "no" {
-			return nil, d.Errf("expected on or off, got %q", d.Val())
-		}
-		return &v, nil
-	}
 	for d.NextBlock(0) {
-		var err error
 		switch d.Val() {
-		case "schema":
-			h.Schema = append(h.Schema, d.RemainingArgs()...)
-			if len(h.Schema) == 0 {
+		case "app":
+			if !d.AllArgs(&h.App) {
 				return d.ArgErr()
 			}
 		case "database", "database_file":
@@ -209,26 +165,17 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			} else {
 				h.DSNFile = args[1]
 			}
-		case "site_name":
-			if !d.AllArgs(&h.SiteName) {
-				return d.ArgErr()
-			}
-		case "tagline":
-			if !d.AllArgs(&h.Tagline) {
-				return d.ArgErr()
-			}
-		case "home":
-			h.Home = append(h.Home, d.RemainingArgs()...)
-		case "signup":
-			if h.Signup, err = onOff(); err != nil {
-				return err
-			}
-		case "secure_cookies":
-			if h.SecureCookies, err = onOff(); err != nil {
-				return err
-			}
 		case "admin", "admins":
 			h.Admins = append(h.Admins, d.RemainingArgs()...)
+		case "secure_cookies":
+			if !d.NextArg() {
+				return d.ArgErr()
+			}
+			v := d.Val() == "on"
+			if !v && d.Val() != "off" {
+				return d.Errf("secure_cookies: expected on or off, got %q", d.Val())
+			}
+			h.SecureCookies = &v
 		case "session_ttl":
 			if !d.NextArg() {
 				return d.ArgErr()
@@ -238,13 +185,6 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.Errf("session_ttl: %v", err)
 			}
 			h.SessionTTL = caddy.Duration(dur)
-		case "timezone":
-			if !d.AllArgs(&h.DefaultTimezone) {
-				return d.ArgErr()
-			}
-			if _, err := time.LoadLocation(h.DefaultTimezone); err != nil {
-				return d.Errf("timezone: %v", err)
-			}
 		case "uploads":
 			args := d.RemainingArgs()
 			if len(args) < 1 || len(args) > 2 {
@@ -258,34 +198,8 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				}
 				h.MaxUploadBytes = n
 			}
-		case "templates":
-			if !d.AllArgs(&h.Templates) {
-				return d.ArgErr()
-			}
-		case "activity_import": // ("import" is reserved by the Caddyfile lexer)
-			for nest := d.Nesting(); d.NextBlock(nest); {
-				role := d.Val()
-				var class string
-				if !d.AllArgs(&class) {
-					return d.ArgErr()
-				}
-				switch role {
-				case "activity":
-					h.Import.Activity = class
-				case "lap":
-					h.Import.Lap = class
-				case "match":
-					h.Import.Match = class
-				case "registration":
-					h.Import.Registration = class
-				case "result":
-					h.Import.Result = class
-				default:
-					return d.Errf("activity_import: unknown role %q", role)
-				}
-			}
 		default:
-			return d.Errf("unrecognized datadriven option %q", d.Val())
+			return d.Errf("unrecognized datadriven option %q (application settings belong in the app's app.yaml)", d.Val())
 		}
 	}
 	return nil

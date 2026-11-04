@@ -5,7 +5,8 @@ go 1.26.0
 require (
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/muktihari/fit v0.28.5
-	github.com/timeofmind/data-driven-framework-go v0.1.0
+	github.com/timeofmind/data-driven-framework-go v0.2.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -172,7 +173,6 @@ require (
 	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/grpc/cmd/protoc-gen-go-grpc v1.6.2 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	howett.net/plist v1.0.1 // indirect
 	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

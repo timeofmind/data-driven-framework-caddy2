@@ -16,7 +16,7 @@
     </nav>
     <div class="account">
       {{if .P}}
-        {{if .Import}}<a class="btn small" href="{{.Base}}/import">Upload</a>{{end}}
+        {{if .Upload}}<a class="btn small" href="{{.Upload.URL}}">Upload</a>{{end}}
         <a href="{{.Base}}/me">{{.P.Name}}</a>
         <form method="post" action="{{.Base}}/logout" class="inline">
           <input type="hidden" name="_csrf" value="{{.CSRF}}">
@@ -38,35 +38,3 @@
 </footer>
 </body>
 </html>{{end}}
-
-{{define "table"}}
-<div class="table-wrap">
-<table>
-  <thead><tr>{{range .Columns}}<th>{{.}}</th>{{end}}</tr></thead>
-  <tbody>
-  {{range .Rows}}{{$u := .URL}}
-    <tr>{{range $i, $c := .Cells}}<td{{if $c.Class}} class="{{$c.Class}}"{{end}}>{{if $c.NoLink}}{{$c.Text}}{{else if eq $i 0}}{{if $c.URL}}<a href="{{$c.URL}}">{{$c.Text}}</a> <a class="open" href="{{$u}}" aria-label="Open">›</a>{{else}}<a href="{{$u}}">{{$c.Text}}</a>{{end}}{{else if $c.URL}}<a href="{{$c.URL}}">{{$c.Text}}</a>{{else if $c.Tag}}<span class="tag tag-{{$c.Tag}}">{{$c.Text}}</span>{{else}}{{$c.Text}}{{end}}</td>{{end}}</tr>
-  {{end}}
-  </tbody>
-</table>
-</div>
-{{end}}
-{{define "field"}}
-<div class="field{{if .Error}} has-error{{end}}{{if eq2 .Type "textarea"}} wide{{end}}">
-  {{if eq2 .Type "checkbox"}}
-    <label class="check"><input type="checkbox" name="{{.Name}}" value="1"{{if .Checked}} checked{{end}}> {{.Label}}</label>
-  {{else}}
-    <label for="f-{{.Name}}">{{.Label}}{{if .Required}} <span class="req" aria-hidden="true">*</span>{{end}}</label>
-    {{if eq2 .Type "textarea"}}
-      <textarea id="f-{{.Name}}" name="{{.Name}}" rows="5"{{if .Required}} required{{end}}{{if .Placeholder}} placeholder="{{.Placeholder}}"{{end}}>{{.Value}}</textarea>
-    {{else if eq2 .Type "select"}}
-      <select id="f-{{.Name}}" name="{{.Name}}"{{if .Required}} required{{end}}>
-        {{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
-      </select>
-    {{else}}
-      <input id="f-{{.Name}}" type="{{.Type}}" name="{{.Name}}" value="{{.Value}}"{{if .Required}} required{{end}}{{if .Placeholder}} placeholder="{{.Placeholder}}"{{end}}{{if .Min}} min="{{.Min}}"{{end}}{{if .Max}} max="{{.Max}}"{{end}}{{if .Step}} step="{{.Step}}"{{end}}{{if .Pattern}} pattern="{{.Pattern}}"{{end}}{{if eq2 .Type "password"}} autocomplete="{{if eq2 .Name "password_confirm"}}new-password{{else}}new-password{{end}}"{{end}}{{if eq2 .Type "email"}} autocomplete="email"{{end}}>
-    {{end}}
-  {{end}}
-  {{if .Error}}<p class="err">{{.Label}} {{.Error}}</p>{{else if .Help}}<p class="help">{{.Help}}</p>{{end}}
-</div>
-{{end}}

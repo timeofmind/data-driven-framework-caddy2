@@ -4,10 +4,10 @@
   <p class="lede">{{if .Tagline}}{{.Tagline}}{{else}}{{.Data.Description}}{{end}}</p>
   <div class="actions">
     {{if .P}}
-      <a class="btn" href="{{.Base}}/calendar">Open your calendar</a>
-      {{if .Import}}<a class="btn ghost" href="{{.Base}}/import">Upload watch data</a>{{end}}
+      <a class="btn" href="{{.Base}}/calendar">Your calendar</a>
+      {{if .Upload}}<a class="btn ghost" href="{{.Upload.URL}}">{{.Upload.Label}}</a>{{end}}
     {{else}}
-      {{if .Signup}}<a class="btn" href="{{.Base}}/signup">Create a free account</a>{{end}}
+      {{if .Signup}}<a class="btn" href="{{.Base}}/signup">Create an account</a>{{end}}
       <a class="btn ghost" href="{{.Base}}/login">Sign in</a>
     {{end}}
   </div>

@@ -1,122 +1,129 @@
 # data-driven-framework-caddy2
 
-A [Caddy v2](https://caddyserver.com) HTTP handler that serves a complete web
-application generated at runtime from a
-[data-driven-framework-go](https://github.com/timeofmind/data-driven-framework-go)
-YAML schema — no per-app code:
+An app-agnostic [Caddy v2](https://caddyserver.com) HTTP handler that runs
+data-driven applications. It contains no application: an application lives in its
+own repository and is loaded through the handler.
 
-- **Pages** for every class: searchable, filterable, paginated lists; month
-  calendars for classes with a `calendar` date; detail pages showing linked records
-  and every related list (`has_many`), with leaderboards where children are ranked
-  by a duration; create/edit forms with grouped fields, relation pickers and
-  validation messages; delete confirmations that spell out cascades.
-- **Accounts** for the schema's `auth` class: sign-up, sign-in, sessions (stored
-  hashed in the database), profile editing, account deletion.
-- **Access rules** straight from the schema's `access` blocks (owner, public/private
-  rows, parent-governed children) applied to every page, list, picker and API call.
-- **JSON API** at `/api/v1/<resource>` with a generated OpenAPI 3 document.
-- **Activity uploads** (optional): FIT (Garmin, COROS, Suunto, Wahoo, Polar), GPX,
-  TCX and timing-system CSV files become log entries with laps, matched to the
-  day's planned workout, and posted to virtual events the athlete entered.
+```
+my-app/                      ← the application (its own repo)
+  app.yaml                   name, navigation, home page, uploads, sign-up text
+  schema/*.yaml              data structure, constraints, relationships, access rules
+                             and behaviour, in data-driven-framework-go YAML
+  theme/                     page layout and styling
+    layout.html  home.html  list.html  detail.html  …
+    static/style.css  …
+```
 
-`sites/athleticstogether/` is the first site built on it: a public training
-planner, training log and virtual-events platform.
+From that directory the handler serves:
+
+- **Pages and forms generated from the schema** — lists (search, filters, paging),
+  month calendars, record pages with related records, create/edit forms with
+  validation, delete confirmations. Forms, fields, tables and calendar grids are the
+  handler's generic components; the app's theme places and styles them.
+- **Accounts** for the schema's `auth` class: sign-up, sign-in, sessions, profiles,
+  account deletion.
+- **Access rules** from the schema's `access` blocks, applied to every page, list,
+  relation picker and API call.
+- **Declared behaviour** from the schema: computed fields, calendar labels, on-save
+  triggers, ranked (leaderboard) relationships, add-button labels and conditions.
+- **A JSON API** at `/api/v1/<resource>` with a generated OpenAPI 3 document.
+- **File uploads** into a class with an `import` block: built-in readers for FIT
+  (Garmin, COROS, Suunto, Wahoo, Polar), GPX, TCX and timing-system CSV produce
+  device-neutral fields; the schema decides what they become.
+
+The schema language (including behaviour and imports) is documented in
+[data-driven-framework-go](https://github.com/timeofmind/data-driven-framework-go).
 
 ## Build
 
 ```sh
-go build -o caddy ./cmd/caddy         # standard Caddy + this module
-# or, with xcaddy:
+go build -o caddy ./cmd/caddy      # standard Caddy + this handler
+# or
 xcaddy build --with github.com/timeofmind/data-driven-framework-caddy2
 ```
 
 ## Caddyfile
 
+Only deployment settings go here; everything about the application is in its directory.
+
 ```caddyfile
 example.com {
 	datadriven [<base_path>] {
-		schema         <file.yaml> [<more.yaml>...]
-		database       mysql|sqlite <dsn>          # or:
+		app            /srv/my-app                    # the application directory
+		database       mysql|sqlite <dsn>             # or:
 		database_file  mysql|sqlite <file holding the DSN>
-		site_name      "My App"
-		tagline        "One line under the title on the home page"
-		home           <Class> [<Class>...]        # featured on the home page
-		signup         on|off                      # default on
-		admin          <login> [<login>...]        # e.g. emails with full access
-		secure_cookies on|off                      # default on
+		admin          <login> [<login>...]           # e.g. emails with full access
+		secure_cookies on|off                         # default on
 		session_ttl    720h
-		timezone       America/Vancouver           # for placing uploads on a day
-		uploads        <dir> [25MB]                # keep originals; per-file limit
-		templates      <dir>                       # override any template or style.css
-		activity_import {                          # enables /import
-			activity     Activity
-			lap          Lap
-			match        PlannedWorkout
-			registration EventRegistration
-			result       EventResult
-		}
+		uploads        <dir> [25MB]                   # keep originals; per-file limit
 	}
 }
 ```
 
-The handler answers only the paths it owns (`/`, `/c/…`, `/calendar`, `/import`,
+The handler answers only its own paths (`/`, `/c/…`, `/calendar`, `/upload`,
 `/signup`, `/login`, `/logout`, `/me`, `/static/…`, `/api/v1/…`); everything else
-falls through to the next handler, so `file_server`, `respond` or `reverse_proxy`
-can serve the rest of the site. Behind a TLS-terminating proxy, set
-`trusted_proxies` so sign-in rate limiting sees real client addresses.
+falls through to the next handler.
 
-MySQL/MariaDB DSNs use go-sql-driver syntax, e.g.
-`user:password@unix(/run/mysqld/mysqld.sock)/dbname`. On start the database is
-brought up to the schema without ever dropping anything: missing tables and columns
-are created; type changes and removals are logged as needing a migration
-(`ddframework diff --sql`).
+## app.yaml
 
-## URL map
+```yaml
+name: "My App"
+tagline: "One line under the name on the home page"
+schema: [schema/*.yaml]            # globs, relative to the app directory
+theme: theme                       # default "theme"
+timezone: America/Vancouver        # default for imports
+signup: {enabled: true, intro: "Shown above the sign-up form"}
+nav: [Meetup, Walk]                # default: every top-level class
+home:
+  - {class: Meetup, title: "Upcoming meetups"}       # upcoming first, else most recent
+  - {class: Walk, mine: true, title: "Your walks"}   # only the signed-in person's
+uploads:
+  class: Walk                      # must have an import block in the schema
+  title: "Upload GPS files"
+  intro: "…"
+  help: ["…"]
+```
 
-| Path | |
-|---|---|
-| `/c/<resource>` | list (`?q=`, `?mine=1`, `?<fk or enum>=<value>`, `?order=slot desc`, `?page=`) |
-| `/c/<resource>?view=calendar&month=2026-11` | month calendar (classes with `calendar:`) |
-| `/c/<resource>/new?<slot>=<value>` | create form, prefilled from the query string |
-| `/c/<resource>/<id>`, `/edit`, `/delete` | detail, edit, delete |
-| `/calendar` | the signed-in person's calendar classes on one grid (planner view) |
-| `/import` | upload activity files |
-| `/api/v1/<resource>[/<id>]` | JSON: GET, POST, PUT/PATCH, DELETE |
-| `/api/v1/me` | who am I + the CSRF token for API writes |
-| `/api/v1/import` | multipart upload (field `files`) |
-| `/api/v1/openapi.json` | OpenAPI 3.0.3 |
+## Themes
 
-`<resource>` is the class's table name with `-` for `_` (`planned-workouts`).
+A theme supplies `layout.html` (defining `layout`, which renders
+`{{template "content" .}}`) and any of the page templates `home`, `list`,
+`calendar`, `detail`, `form`, `confirm`, `login`, `signup`, `upload`, `error`, plus
+files under `static/` (served at `/static/…`). Anything the theme leaves out comes
+from the built-in default theme. Page templates use the components `table`, `field`
+and the page data documented in `app/views.go`. Calendar items and tags carry CSS
+classes for enum values (`<slot>-<value>`, `tag-<value>`) so a theme can colour them.
+
+## File readers
+
+Uploaded files become these fields for the import block's expressions:
+`sport, sub_sport, title, device, format, file_name, file_hash, start_utc,
+start_local, date_local, elapsed_s, moving_s, distance_m, distance_km, ascent_m,
+avg_hr, max_hr, calories, avg_cadence, avg_power_w, track_points`, and children
+`laps` with `index, start_local, elapsed_s, moving_s, distance_m, distance_km,
+ascent_m, avg_hr, max_hr`. Readers are pluggable (`importer.Register`).
 
 ## Security model
 
-- Passwords: bcrypt (`password` slot type). Sessions: random 256-bit tokens in an
-  HttpOnly, SameSite=Lax cookie; only their SHA-256 is stored.
-- CSRF: double-submit token on every form; API writes need the `X-CSRF-Token` header.
+- Passwords: bcrypt. Sessions: random 256-bit tokens in HttpOnly, SameSite=Lax
+  cookies; only their SHA-256 is stored.
+- CSRF: double-submit token on every form; API writes need `X-CSRF-Token`
+  (from `GET /api/v1/me`).
 - Rate limits per client IP on sign-up, sign-in and uploads.
-- Strict Content-Security-Policy (no scripts at all), `nosniff`, `frame-ancestors 'none'`.
-- Private records answer 404, never 403, so their existence isn't revealed.
-- Foreign keys are checked on every write: you can only link to rows you can read,
-  and to *your own* rows of classes that have an owner (no attaching your result to
-  someone else's activity, or your workout to someone else's plan).
-- Upload size limits per file and per request; originals are stored under
-  content-hash names, never user-supplied paths.
-
-## Activity import conventions
-
-`activity_import` names the classes uploads fill. Slots are matched by name and set
-only when present — see `app/imports.go` for the list. Importers are pluggable:
-implement `importer.Importer` and call `importer.Register` to support another
-watch or timing format.
+- Strict Content-Security-Policy (no scripts), `nosniff`, `frame-ancestors 'none'`.
+- Private records answer 404. Foreign keys are checked on every write: only rows you
+  can read, and your own rows of owned classes, can be linked.
+- Upload size limits per file and per request; originals stored under content-hash names.
 
 ## Development
 
 ```sh
-go test ./...                                                  # SQLite
+go test ./...                                                       # SQLite
 DDF_TEST_MYSQL_DSN='user:pw@unix(/run/mysqld/mysqld.sock)/scratch' go test ./...
 ```
 
-The MySQL run drops every table in the scratch database.
+Tests run against `app/testdata/walkclub`, a small fixture application. The MySQL
+run drops every table in the scratch database.
 
 ## License
 

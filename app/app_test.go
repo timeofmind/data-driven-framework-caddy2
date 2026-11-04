@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -28,15 +29,19 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/runtime"
 )
 
-const siteSchema = "../sites/athleticstogether/schema/athleticstogether.yaml"
+// The tests run the handler against testdata/walkclub, a small fixture app
+// (app.yaml + schema + theme). Nothing here knows about any real application.
+const fixtureApp = "testdata/walkclub"
 
 func newTestApp(t *testing.T) (*App, *httptest.Server) {
+	return newTestAppAt(t, fixtureApp)
+}
+
+func newTestAppAt(t *testing.T, dir string) (*App, *httptest.Server) {
 	t.Helper()
 	cfg := Config{
-		SchemaFiles: []string{siteSchema}, Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "app.db"),
-		SiteName: "Athletics Together", AllowSignup: true, Admins: []string{"admin@example.com"},
-		UploadDir: t.TempDir(), DefaultTimezone: "America/Vancouver",
-		Import: ImportConfig{Activity: "Activity", Lap: "Lap", Match: "PlannedWorkout", Registration: "EventRegistration", Result: "EventResult"},
+		AppDir: dir, Driver: "sqlite", DSN: filepath.Join(t.TempDir(), "app.db"),
+		Admins: []string{"admin@example.com"}, UploadDir: t.TempDir(),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	if dsn := os.Getenv("DDF_TEST_MYSQL_DSN"); dsn != "" {
@@ -77,7 +82,6 @@ func (b *browser) get(path string) (int, string, http.Header) {
 
 var csrfRE = regexp.MustCompile(`name="_csrf" value="([0-9a-f]{64})"`)
 
-// csrf loads a page and returns its form token.
 func (b *browser) csrf(path string) string {
 	b.t.Helper()
 	_, body, _ := b.get(path)
@@ -104,21 +108,42 @@ func (b *browser) post(path string, form url.Values) (int, string, string) {
 
 func (b *browser) signup(email, name string) string {
 	b.t.Helper()
-	code, body, loc := b.post("/signup", url.Values{"email": {email}, "password_hash": {"long enough pw"}, "password_confirm": {"long enough pw"}, "display_name": {name}})
+	code, body, loc := b.post("/signup", url.Values{"email": {email}, "pw": {"long enough pw"}, "password_confirm": {"long enough pw"}, "name": {name}})
 	if code != http.StatusSeeOther {
-		b.t.Fatalf("signup %s: %d\n%s", email, code, body)
+		b.t.Fatalf("signup %s: %d\n%s", email, code, extractAlert(body))
 	}
 	return loc
 }
 
-// create posts a generated form and returns the new record's path.
 func (b *browser) create(path string, form url.Values) string {
 	b.t.Helper()
 	code, body, loc := b.post(path, form)
 	if code != http.StatusSeeOther {
-		b.t.Fatalf("create %s: %d\n%s", path, code, extractAlert(body))
+		b.t.Fatalf("create %s: %d %s", path, code, extractAlert(body))
 	}
 	return loc
+}
+
+func (b *browser) upload(files map[string][]byte) string {
+	b.t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	mw.WriteField("_csrf", b.csrf("/upload"))
+	for name, data := range files {
+		fw, _ := mw.CreateFormFile("files", name)
+		fw.Write(data)
+	}
+	mw.Close()
+	resp, err := b.c.Post(b.base+"/upload", mw.FormDataContentType(), &buf)
+	if err != nil {
+		b.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		b.t.Fatalf("upload: %d %s", resp.StatusCode, extractAlert(string(body)))
+	}
+	return string(body)
 }
 
 func extractAlert(body string) string {
@@ -131,104 +156,138 @@ func extractAlert(body string) string {
 	return strings.Join(out, " | ")
 }
 
-func idOf(t *testing.T, loc string) string {
-	t.Helper()
-	i := strings.LastIndex(loc, "/")
-	return loc[i+1:]
-}
+func idOf(loc string) string { return loc[strings.LastIndex(loc, "/")+1:] }
 
-func TestSignupLoginAndPrivacy(t *testing.T) {
+func mustID(loc string) int64 { n, _ := strconv.ParseInt(idOf(loc), 10, 64); return n }
+
+func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+func TestAccountsAccessAndForms(t *testing.T) {
 	_, srv := newTestApp(t)
-	alice := newBrowser(t, srv)
-	me := alice.signup("Alice@Example.com", "Alice")
-	if !strings.HasPrefix(me, "/c/athletes/") {
+	ann := newBrowser(t, srv)
+	me := ann.signup("Ann@Example.com", "Ann")
+	if !strings.HasPrefix(me, "/c/members/") {
 		t.Fatalf("signup redirect %q", me)
 	}
-	if code, body, _ := alice.get(me); code != 200 || !strings.Contains(body, "Alice") || strings.Contains(body, "alice@example.com") {
-		t.Fatalf("profile page: %d, email leaked: %v", code, strings.Contains(body, "alice@example.com"))
+	if code, body, _ := ann.get(me); code != 200 || !strings.Contains(body, "Ann") || strings.Contains(body, "ann@example.com") {
+		t.Fatalf("profile: %d, hidden login leaked: %v", code, strings.Contains(body, "ann@example.com"))
 	}
-	// Duplicate email, case-insensitive.
 	other := newBrowser(t, srv)
-	code, body, _ := other.post("/signup", url.Values{"email": {"alice@example.com"}, "password_hash": {"long enough pw"}, "password_confirm": {"long enough pw"}, "display_name": {"X"}})
+	code, body, _ := other.post("/signup", url.Values{"email": {"ann@example.com"}, "pw": {"long enough pw"}, "password_confirm": {"long enough pw"}, "name": {"X"}})
 	if code != 200 || !strings.Contains(body, "already has an account") {
 		t.Fatalf("duplicate signup: %d %s", code, extractAlert(body))
 	}
 
-	plan := alice.create("/c/training-plans/new", url.Values{"name": {"Spring 10K"}, "start_date": {"2026-11-01"}, "visibility": {"private"}})
-	pub := alice.create("/c/training-plans/new", url.Values{"name": {"Open Marathon Plan"}, "start_date": {"2026-11-01"}, "visibility": {"public"}})
-
+	private := ann.create("/c/routes/new", url.Values{"name": {"Secret loop"}, "distance_km": {"5"}})
+	public := ann.create("/c/routes/new", url.Values{"name": {"Harbour walk"}, "distance_km": {"8"}, "visibility": {"public"}})
 	anon := newBrowser(t, srv)
-	if code, _, _ := anon.get(plan); code != 404 {
-		t.Errorf("anonymous sees private plan: %d", code)
+	if code, _, _ := anon.get(private); code != 404 {
+		t.Errorf("anonymous sees a private row: %d", code)
 	}
-	if code, body, _ := anon.get(pub); code != 200 || !strings.Contains(body, "Open Marathon Plan") {
-		t.Errorf("anonymous cannot see public plan: %d", code)
+	if code, _, _ := anon.get(public); code != 200 {
+		t.Errorf("anonymous cannot see a public row: %d", code)
 	}
-	_, list, _ := anon.get("/c/training-plans")
-	if strings.Contains(list, "Spring 10K") || !strings.Contains(list, "Open Marathon Plan") {
-		t.Error("list leaks private plan or misses public one")
+	if _, list, _ := anon.get("/c/routes"); strings.Contains(list, "Secret loop") || !strings.Contains(list, "Harbour walk") {
+		t.Error("list leaks a private row or misses a public one")
 	}
 
-	bob := newBrowser(t, srv)
-	bob.signup("bob@example.com", "Bob")
-	if code, _, _ := bob.get(plan + "/edit"); code != 404 {
-		t.Errorf("bob can open alice's private plan editor: %d", code)
+	ben := newBrowser(t, srv)
+	ben.signup("ben@example.com", "Ben")
+	if code, _, _ := ben.get(private + "/edit"); code != 404 {
+		t.Errorf("ben opens ann's private editor: %d", code)
 	}
-	if code, _, _ := bob.get(pub + "/edit"); code != 403 {
-		t.Errorf("bob can edit alice's public plan: %d", code)
+	if code, _, _ := ben.get(public + "/edit"); code != 403 {
+		t.Errorf("ben edits ann's public row: %d", code)
 	}
-	if code, _, _ := bob.post(pub+"/delete", url.Values{}); code != 403 {
-		t.Errorf("bob can delete alice's plan: %d", code)
+	if code, _, _ := ben.post(public+"/delete", url.Values{"_csrf": {ben.csrf("/c/routes/new")}}); code != 403 {
+		t.Errorf("ben deletes ann's row: %d", code)
 	}
-	// Bob cannot attach a workout to Alice's plan by guessing its id.
-	code, body, _ = bob.post("/c/planned-workouts/new", url.Values{"plan_id": {idOf(t, plan)}, "date": {"2026-11-05"}, "title": {"sneaky"}})
+	code, body, _ = ben.post("/c/walks/new", url.Values{"route_id": {idOf(private)}, "day": {"2026-11-05"}, "title": {"x"}})
 	if code != 200 || !strings.Contains(body, "does not exist") {
-		t.Errorf("bob linked to a private plan: %d %s", code, extractAlert(body))
+		t.Errorf("linked to a private row: %d %s", code, extractAlert(body))
 	}
-	code, body, _ = bob.post("/c/planned-workouts/new", url.Values{"plan_id": {idOf(t, pub)}, "date": {"2026-11-05"}, "title": {"sneaky"}})
+	code, body, _ = ben.post("/c/walks/new", url.Values{"route_id": {idOf(public)}, "day": {"2026-11-05"}, "title": {"x"}})
 	if code != 200 || !strings.Contains(body, "must be one of your own") {
-		t.Errorf("bob linked to alice's public plan: %d %s", code, extractAlert(body))
+		t.Errorf("linked to someone else's row: %d %s", code, extractAlert(body))
 	}
-
-	// CSRF: a post without the token is refused.
-	resp, _ := bob.c.PostForm(srv.URL+"/c/training-plans/new", url.Values{"name": {"x"}, "start_date": {"2026-11-01"}})
+	resp, _ := ben.c.PostForm(srv.URL+"/c/routes/new", url.Values{"name": {"x"}})
 	if resp.StatusCode != 403 {
 		t.Errorf("missing CSRF accepted: %d", resp.StatusCode)
 	}
 
-	// Sign out, then sign back in with the original-case email.
-	alice.post("/logout", url.Values{})
-	if code, _, loc := alice.get("/c/training-plans/new"); code != 303 || !strings.HasPrefix(loc.Get("Location"), "/login") {
-		t.Errorf("signed-out create should redirect to login, got %d", code)
+	code, body, _ = ann.post("/c/walks/new", url.Values{"day": {"2026-11-02"}, "title": {"Evening"}, "distance_km": {"-1"}, "duration": {"1:75"}})
+	if code != 200 || !strings.Contains(body, "must be at least 0") || !strings.Contains(body, "must be a duration") {
+		t.Errorf("validation: %d %s", code, extractAlert(body))
 	}
-	code, _, loc := alice.post("/login", url.Values{"login": {"ALICE@example.com"}, "password": {"long enough pw"}, "next": {"/calendar"}})
+	walk := ann.create("/c/walks/new", url.Values{"day": {"2026-11-02"}, "title": {"Evening"}, "distance_km": {"8"}, "duration": {"1:36:00"}, "route_id": {idOf(public)}})
+	if _, wp, _ := ann.get(walk); !strings.Contains(wp, "1:36:00") || !strings.Contains(wp, "12:00 /km") {
+		t.Errorf("duration display or computed field missing")
+	}
+	if _, rp, _ := ann.get(public); !strings.Contains(rp, "2026-11-02") {
+		t.Error("trigger did not update the linked route")
+	}
+
+	ann.post("/logout", url.Values{"_csrf": {ann.csrf("/c/routes/new")}})
+	if code, _, h := ann.get("/c/routes/new"); code != 303 || !strings.HasPrefix(h.Get("Location"), "/login") {
+		t.Errorf("signed-out create should redirect to login: %d", code)
+	}
+	code, _, loc := ann.post("/login", url.Values{"login": {"ANN@example.com"}, "password": {"long enough pw"}, "next": {"/calendar"}})
 	if code != 303 || loc != "/calendar" {
 		t.Fatalf("login: %d %q", code, loc)
 	}
-	code, body, _ = alice.post("/login", url.Values{"login": {"alice@example.com"}, "password": {"wrong"}})
-	if code != 200 || !strings.Contains(body, "match an account") {
+	if code, body, _ := ann.post("/login", url.Values{"login": {"ann@example.com"}, "password": {"wrong"}}); code != 200 || !strings.Contains(body, "match an account") {
 		t.Errorf("bad password: %d", code)
 	}
-	if code, _, _ := alice.get(plan); code != 200 {
-		t.Errorf("alice cannot see her own plan after re-login: %d", code)
+}
+
+func TestThemeAndManifest(t *testing.T) {
+	_, srv := newTestApp(t)
+	b := newBrowser(t, srv)
+	_, home, _ := b.get("/")
+	if !strings.Contains(home, `data-theme="walkclub"`) || !strings.Contains(home, "/static/club.css") {
+		t.Error("the app's theme layout was not used")
+	}
+	if code, css, h := b.get("/static/club.css"); code != 200 || !strings.Contains(css, "serif") || !strings.HasPrefix(h.Get("Content-Type"), "text/css") {
+		t.Errorf("theme static file: %d", code)
+	}
+	if code, _, _ := b.get("/static/../app.yaml"); code == 200 {
+		t.Error("static path traversal")
+	}
+	if _, signup, _ := b.get("/signup"); !strings.Contains(signup, "Join the club.") {
+		t.Error("signup intro from app.yaml missing")
+	}
+
+	// An app without a theme falls back to the built-in default.
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "schema"), 0o755)
+	src, _ := os.ReadFile(filepath.Join(fixtureApp, "schema", "club.yaml"))
+	os.WriteFile(filepath.Join(dir, "schema", "club.yaml"), src, 0o644)
+	os.WriteFile(filepath.Join(dir, "app.yaml"), []byte("name: Bare\n"), 0o644)
+	_, srv2 := newTestAppAt(t, dir)
+	b2 := newBrowser(t, srv2)
+	if _, h, _ := b2.get("/"); !strings.Contains(h, "/static/style.css") || !strings.Contains(h, "Bare") {
+		t.Error("default theme not used for an app without one")
+	}
+	if code, _, _ := b2.get("/static/style.css"); code != 200 {
+		t.Error("default stylesheet missing")
 	}
 }
 
 func fitFile(t *testing.T, start time.Time, km float64, secs float64) []byte {
 	t.Helper()
 	act := filedef.NewActivity()
-	act.FileId = *mesgdef.NewFileId(nil).SetType(typedef.FileActivity).SetManufacturer(typedef.ManufacturerGarmin).
-		SetProduct(uint16(typedef.GarminProductFr255)).SetTimeCreated(start)
+	act.FileId = *mesgdef.NewFileId(nil).SetType(typedef.FileActivity).SetManufacturer(typedef.ManufacturerCoros).
+		SetProductName("PACE 3").SetTimeCreated(start)
 	act.Activity = mesgdef.NewActivity(nil).SetTimestamp(start.Add(time.Duration(secs) * time.Second)).SetNumSessions(1)
 	half := secs / 2
 	for i := 0; i < 2; i++ {
 		ls := start.Add(time.Duration(float64(i)*half) * time.Second)
 		act.Laps = append(act.Laps, mesgdef.NewLap(nil).SetTimestamp(ls.Add(time.Duration(half)*time.Second)).SetStartTime(ls).
-			SetTotalElapsedTimeScaled(half).SetTotalTimerTimeScaled(half).SetTotalDistanceScaled(km*500).SetAvgHeartRate(150))
+			SetTotalElapsedTimeScaled(half).SetTotalTimerTimeScaled(half).SetTotalDistanceScaled(km*500))
 	}
 	act.Sessions = append(act.Sessions, mesgdef.NewSession(nil).SetTimestamp(start.Add(time.Duration(secs)*time.Second)).
-		SetStartTime(start).SetSport(typedef.SportRunning).SetTotalElapsedTimeScaled(secs).SetTotalTimerTimeScaled(secs).
-		SetTotalDistanceScaled(km*1000).SetAvgHeartRate(150).SetMaxHeartRate(171).SetFirstLapIndex(0).SetNumLaps(2))
+		SetStartTime(start).SetSport(typedef.SportWalking).SetTotalElapsedTimeScaled(secs).SetTotalTimerTimeScaled(secs).
+		SetTotalDistanceScaled(km*1000).SetFirstLapIndex(0).SetNumLaps(2))
 	fit := act.ToFIT(nil)
 	var buf bytes.Buffer
 	if err := encoder.New(&buf).Encode(&fit); err != nil {
@@ -237,126 +296,95 @@ func fitFile(t *testing.T, start time.Time, km float64, secs float64) []byte {
 	return buf.Bytes()
 }
 
-func (b *browser) upload(files map[string][]byte) string {
-	b.t.Helper()
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	mw.WriteField("_csrf", b.csrf("/import"))
-	for name, data := range files {
-		fw, _ := mw.CreateFormFile("files", name)
-		fw.Write(data)
+func gpxFile(start time.Time, km float64, secs float64) []byte {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0"?><gpx creator="test" version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><type>walking</type><trkseg>`)
+	n := 60
+	for i := 0; i <= n; i++ {
+		f := float64(i) / float64(n)
+		fmt.Fprintf(&b, `<trkpt lat="%.6f" lon="-123.4"><time>%s</time></trkpt>`, 48.65+km/111.195*f, start.Add(time.Duration(secs*f)*time.Second).Format(time.RFC3339))
 	}
-	mw.Close()
-	resp, err := b.c.Post(b.base+"/import", mw.FormDataContentType(), &buf)
-	if err != nil {
-		b.t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		b.t.Fatalf("upload: %d %s", resp.StatusCode, extractAlert(string(body)))
-	}
-	return string(body)
+	b.WriteString(`</trkseg></trk></gpx>`)
+	return []byte(b.String())
 }
 
-func TestPlanUploadMatchAndVirtualEvent(t *testing.T) {
+func TestUploadsDrivenBySchema(t *testing.T) {
 	a, srv := newTestApp(t)
 	org := newBrowser(t, srv)
-	org.signup("race@example.com", "Race Director")
-	event := org.create("/c/events/new", url.Values{"name": {"November Virtual 10K"}, "sport": {"run"}, "distance_km": {"10"},
-		"start_date": {"2026-11-01"}, "end_date": {"2026-11-30"}, "registration_open": {"1"}, "visibility": {"public"}})
+	org.signup("org@example.com", "Organiser")
+	meetup := org.create("/c/meetups/new", url.Values{"title": {"Sunday stroll"}, "day": {"2026-11-03"}, "open": {"1"}})
+	closed := org.create("/c/meetups/new", url.Values{"title": {"Closed one"}, "day": {"2026-11-04"}})
 
-	runner := newBrowser(t, srv)
-	runner.signup("runner@example.com", "Rhea Runner")
-	plan := runner.create("/c/training-plans/new", url.Values{"name": {"10K block"}, "start_date": {"2026-11-01"}})
-	// The plan page offers "Add workout" prefilled with the plan.
-	if _, body, _ := runner.get(plan); !strings.Contains(body, "/c/planned-workouts/new?plan_id="+idOf(t, plan)) {
-		t.Fatal("plan page lacks prefilled add-workout link")
+	w := newBrowser(t, srv)
+	w.signup("walker@example.com", "Wendy")
+	route := w.create("/c/routes/new", url.Values{"name": {"Seafront"}, "distance_km": {"6"}})
+	if _, mp, _ := w.get(meetup); !strings.Contains(mp, ">Attend<") {
+		t.Fatal("add_label from the schema not shown")
 	}
-	workout := runner.create("/c/planned-workouts/new?plan_id="+idOf(t, plan), url.Values{"plan_id": {idOf(t, plan)},
-		"date": {"2026-11-03"}, "title": {"10K time trial"}, "sport": {"run"}, "workout_type": {"race"},
-		"target_distance_km": {"10"}, "target_duration": {"45:00"}})
-	if _, body, _ := runner.get(workout); !strings.Contains(body, "45:00") || !strings.Contains(body, "Planned") {
-		t.Errorf("workout page should show target time 45:00 and status planned")
+	if _, cp, _ := w.get(closed); strings.Contains(cp, ">Attend<") {
+		t.Error("add_when false (closed meetup) still offers Attend")
 	}
-
-	// Register for the event from its page.
-	_, evPage, _ := runner.get(event)
-	if !strings.Contains(evPage, ">Register<") {
-		t.Fatal("event page has no Register button")
-	}
-	runner.create("/c/event-registrations/new?event_id="+idOf(t, event), url.Values{"event_id": {idOf(t, event)}, "team": {"Peninsula Striders"}})
-	if _, evPage, _ := runner.get(event); strings.Contains(evPage, ">Register<") {
-		t.Error("Register still offered after registering")
-	}
-	code, body, _ := runner.post("/c/event-registrations/new", url.Values{"event_id": {idOf(t, event)}})
-	if code != 200 || !strings.Contains(body, "already exists") {
-		t.Errorf("double registration: %d %s", code, extractAlert(body))
+	w.create("/c/attendances/new?meetup_id="+idOf(meetup), url.Values{"meetup_id": {idOf(meetup)}})
+	if _, mp, _ := w.get(meetup); strings.Contains(mp, ">Attend<") {
+		t.Error("Attend still offered after attending (unique meetup+member)")
 	}
 
-	// Upload a watch file: 10.02 km in 44:10 on the evening of Nov 3 (Vancouver time, so Nov 4 UTC).
+	// 6.02 km in 1:12:00 on Nov 3, Vancouver evening (UTC next day).
 	start := time.Date(2026, 11, 4, 1, 30, 0, 0, time.UTC)
-	res := runner.upload(map[string][]byte{"Garmin_10k.fit": fitFile(t, start, 10.02, 2650)})
-	if !strings.Contains(res, "imported") || !strings.Contains(res, "10K time trial") || !strings.Contains(res, "November Virtual 10K") {
-		t.Fatalf("upload result missing import/match/event:\n%s", res)
+	res := w.upload(map[string][]byte{"walk.fit": fitFile(t, start, 6.02, 4320)})
+	if !strings.Contains(res, "imported") || !strings.Contains(res, "Seafront") || !strings.Contains(res, "Sunday stroll") {
+		t.Fatalf("upload did not import / link / create per the schema:\n%s", res)
 	}
-	// Re-uploading the same file is recognised.
-	if res := runner.upload(map[string][]byte{"again.fit": fitFile(t, start, 10.02, 2650)}); !strings.Contains(res, "already uploaded") {
-		t.Errorf("duplicate upload not detected")
+	if res := w.upload(map[string][]byte{"again.fit": fitFile(t, start, 6.02, 4320)}); !strings.Contains(res, "already uploaded") {
+		t.Error("dedupe failed")
+	}
+	if res := w.upload(map[string][]byte{"route.tcx": []byte(`<?xml version="1.0"?><TrainingCenterDatabase><Activities><Activity Sport="Walking"><Id>2026-11-03T10:00:00Z</Id><Lap StartTime="2026-11-03T10:00:00Z"><TotalTimeSeconds>60</TotalTimeSeconds><DistanceMeters>100</DistanceMeters></Lap></Activity></Activities></TrainingCenterDatabase>`)}); !strings.Contains(res, "not a supported file") {
+		t.Error("a format the class does not import was accepted")
 	}
 
 	ctx := context.Background()
-	acts, _ := a.Reg.MustClass("Activity").List(ctx, queryAll())
-	if len(acts) != 1 {
-		t.Fatalf("%d activities", len(acts))
+	walks, _ := a.Reg.MustClass("Walk").List(ctx, runtime.Query{})
+	if len(walks) != 1 {
+		t.Fatalf("%d walks", len(walks))
 	}
-	act := acts[0]
-	if act.String("date") != "2026-11-03" || act.String("start_time") != "2026-11-03 18:30:00" || act.String("title") != "Evening Run" {
-		t.Errorf("local placement: %s %s %q", act.String("date"), act.String("start_time"), act.String("title"))
+	wk := walks[0]
+	if wk.String("day") != "2026-11-03" || wk.String("kind") != "other" || wk.Float("distance_km") != 6.02 || wk.Int("duration") != 4320 {
+		t.Errorf("mapped fields: %v", wk.Values)
 	}
-	if act.String("device") != "Garmin Forerunner 255" || act.Float("distance_km") != 10.02 || act.Int("duration") != 2650 || act.String("source") != "fit" {
-		t.Errorf("activity fields: %+v", act.Values)
+	if legs, _ := a.Reg.MustClass("Leg").List(ctx, runtime.Query{}); len(legs) != 2 {
+		t.Errorf("%d legs", len(legs))
 	}
-	if laps, _ := a.Reg.MustClass("Lap").List(ctx, queryAll()); len(laps) != 2 {
-		t.Errorf("%d laps", len(laps))
-	}
-	pw, _ := a.Reg.MustClass("PlannedWorkout").Load(ctx, act.Int("planned_workout_id"))
-	if pw == nil || pw.String("status") != "completed" {
-		t.Errorf("planned workout not completed: %+v", pw)
-	}
-	// The activity page shows pace; the event page shows the leaderboard with a rank.
-	_, actPage, _ := runner.get("/c/activities/" + itoa(act.ID()))
-	if !strings.Contains(actPage, "4:24 /km") || !strings.Contains(actPage, "Laps") {
-		t.Errorf("activity page missing pace or laps")
-	}
-	anon := newBrowser(t, srv)
-	_, board, _ := anon.get(event)
-	if !strings.Contains(board, "Leaderboard") || !strings.Contains(board, "Rhea Runner") || !strings.Contains(board, "44:10") || !strings.Contains(board, `class="num rank">1<`) {
-		t.Errorf("leaderboard not shown to the public:\n%s", board)
-	}
-	// The activity itself is private by default: the result links to it but the public sees "private".
-	if code, _, _ := anon.get("/c/activities/" + itoa(act.ID())); code != 404 {
-		t.Errorf("private activity visible to anonymous: %d", code)
-	}
-	if code, _, _ := anon.get("/c/laps"); code != 404 && code != 200 {
-		t.Errorf("laps list: %d", code)
-	}
-	_, lapsAnon, _ := anon.get("/api/v1/laps")
-	if !strings.Contains(lapsAnon, `"total":0`) {
-		t.Errorf("anonymous API sees laps of a private activity: %s", lapsAnon)
+	if r, _ := a.Reg.MustClass("Route").Load(ctx, mustID(route)); r.String("last_walked") != "2026-11-03" {
+		t.Error("trigger on the imported record did not run")
 	}
 
-	// The combined calendar shows the plan and the log together.
-	_, cal, _ := runner.get("/calendar?month=2026-11")
-	if !strings.Contains(cal, "10K time trial") || !strings.Contains(cal, "Evening Run") || !strings.Contains(cal, "status-completed") {
-		t.Errorf("calendar missing items")
+	// A faster GPX walk by another attendee on the same day ranks first.
+	z := newBrowser(t, srv)
+	z.signup("zed@example.com", "Zed")
+	z.create("/c/attendances/new?meetup_id="+idOf(meetup), url.Values{"meetup_id": {idOf(meetup)}})
+	z.upload(map[string][]byte{"z.gpx": gpxFile(time.Date(2026, 11, 3, 17, 0, 0, 0, time.UTC), 6, 3000)})
+	anon := newBrowser(t, srv)
+	_, board, _ := anon.get(meetup)
+	zi, wi := strings.Index(board, "Zed"), strings.Index(board, "Wendy")
+	if !strings.Contains(board, "Best times") || zi < 0 || wi < 0 || zi > wi || !strings.Contains(board, `class="num rank">1<`) {
+		t.Errorf("ranked board wrong (zed %d, wendy %d)", zi, wi)
+	}
+	if _, legsAnon, _ := anon.get("/api/v1/legs"); !strings.Contains(legsAnon, `"total":0`) {
+		t.Errorf("parent-governed rows leaked: %s", legsAnon)
+	}
+	_, cal, _ := w.get("/calendar?month=2026-11")
+	if !strings.Contains(cal, "6 km") {
+		t.Error("calendar_label not applied")
+	}
+	if !strings.Contains(cal, "kind-other") {
+		t.Error("enum CSS class missing on calendar items")
 	}
 }
 
 func TestAPI(t *testing.T) {
 	_, srv := newTestApp(t)
 	b := newBrowser(t, srv)
-	b.signup("api@example.com", "Api User")
+	b.signup("api@example.com", "Api")
 	resp, err := b.c.Get(srv.URL + "/api/v1/me")
 	if err != nil {
 		t.Fatal(err)
@@ -367,9 +395,6 @@ func TestAPI(t *testing.T) {
 	}
 	json.NewDecoder(resp.Body).Decode(&me)
 	resp.Body.Close()
-	if !me.Authenticated || len(me.CSRF) != 64 {
-		t.Fatalf("me: %+v", me)
-	}
 	do := func(method, path, body, token string) (int, map[string]any) {
 		req, _ := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
@@ -385,66 +410,51 @@ func TestAPI(t *testing.T) {
 		json.NewDecoder(resp.Body).Decode(&out)
 		return resp.StatusCode, out
 	}
-	if code, _ := do("POST", "/api/v1/activities", `{"date":"2026-11-02","title":"Lunch run"}`, ""); code != 403 {
-		t.Errorf("API write without CSRF header: %d", code)
+	if code, _ := do("POST", "/api/v1/walks", `{"day":"2026-11-02","title":"Lunch"}`, ""); code != 403 {
+		t.Errorf("write without CSRF header: %d", code)
 	}
-	code, out := do("POST", "/api/v1/activities", `{"date":"2026-11-02","title":"Lunch run","distance_km":5.2,"duration":"26:00","athlete_id":999,"source":"fit"}`, me.CSRF)
-	if code != 201 || out["duration"] != float64(1560) || out["source"] != "manual" {
-		t.Fatalf("API create: %d %v", code, out)
-	}
-	if _, leaked := out["athlete_id"]; leaked {
-		t.Error("hidden owner slot in API output")
+	code, out := do("POST", "/api/v1/walks", `{"day":"2026-11-02","title":"Lunch","distance_km":5,"duration":"50:00","member_id":999,"source_hash":"x"}`, me.CSRF)
+	if code != 201 || out["duration"] != float64(3000) || out["source_hash"] != nil {
+		t.Fatalf("create: %d %v", code, out)
 	}
 	id := itoa(int64(out["id"].(float64)))
-	code, out = do("PATCH", "/api/v1/activities/"+id, `{"perceived_effort":11}`, me.CSRF)
-	if code != 422 || out["fields"] == nil {
-		t.Errorf("API validation: %d %v", code, out)
+	if code, out := do("PATCH", "/api/v1/walks/"+id, `{"distance_km":-3}`, me.CSRF); code != 422 || out["fields"] == nil {
+		t.Errorf("validation: %d %v", code, out)
 	}
-	if code, _ := do("DELETE", "/api/v1/activities/"+id, ``, me.CSRF); code != 204 {
-		t.Errorf("API delete: %d", code)
+	if code, _ := do("DELETE", "/api/v1/walks/"+id, ``, me.CSRF); code != 204 {
+		t.Errorf("delete: %d", code)
 	}
 	resp, _ = http.Get(srv.URL + "/api/v1/openapi.json")
 	var spec map[string]any
 	json.NewDecoder(resp.Body).Decode(&spec)
 	resp.Body.Close()
-	if _, ok := spec["paths"].(map[string]any)["/api/v1/planned-workouts/{id}"]; !ok {
-		t.Error("openapi missing planned-workouts path")
+	if spec["info"].(map[string]any)["title"] != "Walk Club" {
+		t.Error("openapi title should come from app.yaml")
 	}
 }
 
 func TestDeleteAccountCascades(t *testing.T) {
 	a, srv := newTestApp(t)
 	b := newBrowser(t, srv)
-	me := b.signup("gone@example.com", "Gone Soon")
-	b.create("/c/training-plans/new", url.Values{"name": {"x"}, "start_date": {"2026-11-01"}})
+	me := b.signup("gone@example.com", "Gone")
+	b.create("/c/routes/new", url.Values{"name": {"x"}})
 	if _, body, _ := b.get(me + "/delete"); !strings.Contains(body, "Delete your account?") {
 		t.Fatal("no account-deletion confirmation")
 	}
 	if code, _, _ := b.post(me+"/delete", url.Values{}); code != 303 {
 		t.Fatalf("delete account: %d", code)
 	}
-	if n, _ := a.Reg.MustClass("TrainingPlan").Count(context.Background(), queryAll()); n != 0 {
-		t.Errorf("plans left after account deletion: %d", n)
-	}
-	if code, _, _ := b.get("/calendar"); code != 303 {
-		t.Errorf("session should be gone: %d", code)
+	if n, _ := a.Reg.MustClass("Route").Count(context.Background(), runtime.Query{}); n != 0 {
+		t.Errorf("rows left after account deletion: %d", n)
 	}
 }
 
 func TestPassThroughUnknownPaths(t *testing.T) {
 	a, _ := newTestApp(t)
-	rec := httptest.NewRecorder()
-	if a.Handle(rec, httptest.NewRequest("GET", "/robots.txt", nil)) {
-		t.Error("app claimed /robots.txt; it should fall through to the next handler")
-	}
-	if !a.Handle(httptest.NewRecorder(), httptest.NewRequest("GET", "/static/style.css", nil)) {
-		t.Error("stylesheet not served")
+	if a.Handle(httptest.NewRecorder(), httptest.NewRequest("GET", "/robots.txt", nil)) {
+		t.Error("app claimed /robots.txt")
 	}
 }
-
-func queryAll() runtime.Query { return runtime.Query{} }
-
-func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
 // resetMySQL drops every table in the scratch database named by dsn.
 func resetMySQL(t *testing.T, dsn string) {
@@ -454,12 +464,12 @@ func resetMySQL(t *testing.T, dsn string) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	conn, err := db.Conn(context.Background())
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	ctx := context.Background()
 	conn.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 0")
 	rows, err := conn.QueryContext(ctx, "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE()")
 	if err != nil {

@@ -1,7 +1,7 @@
 // Package app is a complete web application generated at runtime from a
 // data-driven-framework-go schema: HTML pages (lists, calendars, detail pages
 // with related records, forms), a JSON API with OpenAPI, sign-up and sessions,
-// schema-driven access rules, and uploads of watch / timing-equipment files.
+// schema-driven access rules, and file uploads mapped by the schema's import blocks.
 //
 // It is a plain http.Handler-style component; the Caddy module in the parent
 // package wraps it, and tests drive it with httptest.
@@ -29,38 +29,33 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/schema"
 )
 
-// Config configures an App.
+// Config configures an App. Everything about the application itself comes
+// from its directory (AppDir: app.yaml, schema files, theme); the rest is
+// deployment.
 type Config struct {
-	SchemaFiles []string
-	Driver      string // mysql | sqlite
-	DSN         string
+	AppDir string
+	Driver string // mysql | sqlite
+	DSN    string
 
-	SiteName    string
-	Tagline     string
-	HomeClasses []string // classes featured on the home page (default: calendar classes)
-	BasePath    string   // mount point, e.g. "" or "/app"
-	AllowSignup bool
-	Admins      []string // login values (e.g. emails) granted admin rights
+	BasePath string   // mount point, e.g. "" or "/app"
+	Admins   []string // login values (e.g. emails) granted admin rights
 
-	SecureCookies   bool
-	SessionTTL      time.Duration
-	DefaultTimezone string // for placing uploaded activities on a day; default UTC
+	SecureCookies bool
+	SessionTTL    time.Duration
 
 	UploadDir      string // where original uploads are kept ("" = not kept)
 	MaxUploadBytes int64
-
-	Import ImportConfig
-
-	TemplateDir string // optional directory of template overrides
 
 	// ClientIP returns the client address for rate limiting; defaults to RemoteAddr.
 	ClientIP func(*http.Request) string
 	Logger   *slog.Logger
 }
 
-// App serves one schema.
+// App serves one application.
 type App struct {
 	cfg     Config
+	man     *Manifest
+	uploads *runtime.Handle // the manifest's upload class, if any
 	Model   *model.Model
 	Reg     *runtime.Registry
 	auth    *runtime.Handle
@@ -74,11 +69,22 @@ type App struct {
 // New loads the schema, connects, brings the database up to date (never
 // dropping anything) and prepares templates.
 func New(ctx context.Context, cfg Config) (*App, error) {
-	if len(cfg.SchemaFiles) == 0 {
-		return nil, errors.New("datadriven: at least one schema file is required")
+	if cfg.AppDir == "" {
+		return nil, errors.New("datadriven: app directory is required")
 	}
-	if cfg.SiteName == "" {
-		cfg.SiteName = "Data-driven app"
+	man, err := LoadManifest(cfg.AppDir)
+	if err != nil {
+		return nil, err
+	}
+	if man.Name == "" {
+		man.Name = "Data-driven app"
+	}
+	if man.Timezone == "" {
+		man.Timezone = "UTC"
+	}
+	files, err := man.SchemaFiles()
+	if err != nil {
+		return nil, err
 	}
 	cfg.BasePath = strings.TrimRight(cfg.BasePath, "/")
 	if cfg.SessionTTL == 0 {
@@ -87,13 +93,10 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	if cfg.MaxUploadBytes == 0 {
 		cfg.MaxUploadBytes = 25 << 20
 	}
-	if cfg.DefaultTimezone == "" {
-		cfg.DefaultTimezone = "UTC"
-	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	m, err := schema.LoadFiles(cfg.SchemaFiles...)
+	m, err := schema.LoadFiles(files...)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +118,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	for _, p := range res.Pending {
 		cfg.Logger.Warn("schema difference needs a manual migration", "detail", p)
 	}
-	a := &App{cfg: cfg, Model: m, Reg: reg, bySlug: map[string]*runtime.Handle{}, limiter: newLimiter(), log: cfg.Logger, admins: map[string]bool{}}
+	a := &App{cfg: cfg, man: man, Model: m, Reg: reg, bySlug: map[string]*runtime.Handle{}, limiter: newLimiter(), log: cfg.Logger, admins: map[string]bool{}}
 	for _, ad := range cfg.Admins {
 		a.admins[strings.ToLower(strings.TrimSpace(ad))] = true
 	}
@@ -130,15 +133,40 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		reg.Close()
 		return nil, err
 	}
-	if err := a.cfg.Import.validate(a); err != nil {
+	if err := a.checkManifest(); err != nil {
 		reg.Close()
 		return nil, err
 	}
-	if a.views, err = loadViews(cfg.TemplateDir); err != nil {
+	if a.views, err = loadViews(man.ThemeDir()); err != nil {
 		reg.Close()
 		return nil, err
 	}
 	return a, nil
+}
+
+// checkManifest verifies the manifest's class references against the schema.
+func (a *App) checkManifest() error {
+	for _, n := range a.man.Nav {
+		if c := a.Model.Class(n); c == nil || c.PKSlot() == nil {
+			return fmt.Errorf("app.yaml nav: %q is not a concrete class", n)
+		}
+	}
+	for _, hs := range a.man.Home {
+		if c := a.Model.Class(hs.Class); c == nil || c.PKSlot() == nil {
+			return fmt.Errorf("app.yaml home: %q is not a concrete class", hs.Class)
+		}
+	}
+	if u := a.man.Uploads; u != nil {
+		h, err := a.Reg.Class(u.Class)
+		if err != nil || h.Class.Import == nil {
+			return fmt.Errorf("app.yaml uploads: class %q needs an import block in the schema", u.Class)
+		}
+		if len(acceptedFormats(h.Class)) == 0 {
+			return fmt.Errorf("app.yaml uploads: none of %v has a file reader (available: %v)", h.Class.Import.Formats, importerNames())
+		}
+		a.uploads = h
+	}
+	return nil
 }
 
 // Close releases the database.
@@ -175,9 +203,9 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 	switch {
 	case path == "/":
 		a.wrap(rq, a.home)
-	case parts[0] == "static" && len(parts) == 2:
-		a.static(rq, parts[1])
-	case path == "/signup" && a.auth != nil && a.cfg.AllowSignup:
+	case parts[0] == "static" && len(parts) >= 2:
+		a.static(rq, strings.Join(parts[1:], "/"))
+	case path == "/signup" && a.auth != nil && a.man.signupEnabled():
 		a.wrap(rq, a.signup)
 	case path == "/login" && a.auth != nil:
 		a.wrap(rq, a.login)
@@ -187,8 +215,8 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		a.wrap(rq, a.me)
 	case path == "/calendar":
 		a.wrap(rq, a.calendar)
-	case path == "/import" && a.cfg.Import.enabled():
-		a.wrap(rq, a.importPage)
+	case path == "/upload" && a.uploads != nil:
+		a.wrap(rq, a.uploadPage)
 	case parts[0] == "c" && len(parts) >= 2:
 		hd, ok := a.bySlug[parts[1]]
 		if !ok {

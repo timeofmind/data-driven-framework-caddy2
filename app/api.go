@@ -32,7 +32,7 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 	}
 	switch {
 	case len(parts) == 1 && parts[0] == "openapi.json":
-		b, err := generator.OpenAPIJSON(a.Model, generator.OpenAPIOptions{Title: a.cfg.SiteName, BasePath: a.url("/api/v1")})
+		b, err := generator.OpenAPIJSON(a.Model, generator.OpenAPIOptions{Title: a.man.Name, BasePath: a.url("/api/v1")})
 		if err != nil {
 			return err
 		}
@@ -45,7 +45,7 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 			out["id"], out["name"], out["admin"] = rq.p.ID, rq.p.Name, rq.p.Admin
 		}
 		return writeJSON(rq, http.StatusOK, out)
-	case len(parts) == 1 && parts[0] == "import" && a.cfg.Import.enabled():
+	case len(parts) == 1 && parts[0] == "upload" && a.uploads != nil:
 		if m != http.MethodPost {
 			return errStatus(http.StatusMethodNotAllowed, "use POST with multipart field \"files\"")
 		}
@@ -174,7 +174,6 @@ func (a *App) apiSave(rq *request, rec *runtime.Record, status int) error {
 		}
 		return err
 	}
-	a.afterSave(rq, rec)
 	return writeJSON(rq, status, rec)
 }
 

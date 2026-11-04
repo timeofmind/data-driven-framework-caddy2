@@ -1,7 +1,7 @@
 {{define "content"}}{{$d := .Data}}
 <div class="card narrow">
   <h1>Create your account</h1>
-  <p class="muted">Plan your training, log every session, and join virtual events. Free.</p>
+  {{if $d.Intro}}<p class="muted">{{$d.Intro}}</p>{{end}}
   {{if $d.Message}}<p class="alert">{{$d.Message}}</p>{{end}}
   <form method="post" action="{{.Base}}/signup" class="form">
     <input type="hidden" name="_csrf" value="{{.CSRF}}">
