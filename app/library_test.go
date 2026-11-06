@@ -154,6 +154,11 @@ func TestSharedLibrary(t *testing.T) {
 	if !order(got, "Dune path", "Woods walk", "Shore loop") {
 		t.Error("overall ranking: Dune path, Woods walk, Shore loop")
 	}
+	// The owner column comes first and links to the owner; the title still
+	// links to the route.
+	if !strings.Contains(got, `<a href="/c/routes/`+itoa(dune)+`">Dune path</a>`) || strings.Contains(got, `class="open"`) {
+		t.Error("route titles should link to the route even with the owner column first")
+	}
 	if got = list(anon, "?order=name+asc"); !order(got, "Dune path", "Shore loop", "Woods walk") {
 		t.Error("an explicit order should replace ranking")
 	}

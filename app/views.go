@@ -206,11 +206,13 @@ type cell struct {
 	Class  string
 	Tag    string // enum value; rendered as a pill inside the cell
 	NoLink bool   // first-column cells normally link to the row
+	Open   bool   // the record's title: links to the row
 }
 
 type row struct {
 	URL   string
 	Cells []cell
+	Open  bool // a cell other than the first is the title link
 }
 
 type table struct {
@@ -333,10 +335,22 @@ func (a *App) buildTable(ctx context.Context, p *runtime.Principal, c *model.Cla
 	for _, col := range cols {
 		t.Columns = append(t.Columns, columnLabel(col))
 	}
+	// The record's title links to it wherever its column is (the owner
+	// column usually comes first and links to the owner).
+	titleCol := -1
+	for i, col := range cols {
+		if col.rel == nil && col.slot == c.DisplaySlot() {
+			titleCol = i
+		}
+	}
 	for _, r := range recs {
 		rw := row{URL: a.recordURL(c, r.ID())}
-		for _, col := range cols {
-			rw.Cells = append(rw.Cells, a.cellFor(r, col, tt))
+		for i, col := range cols {
+			ce := a.cellFor(r, col, tt)
+			if i == titleCol && i > 0 && ce.Class != "muted" {
+				ce.Open, rw.Open = true, true
+			}
+			rw.Cells = append(rw.Cells, ce)
 		}
 		t.Rows = append(t.Rows, rw)
 	}
