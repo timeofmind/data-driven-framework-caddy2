@@ -10,17 +10,20 @@
   </div>
 </div>
 <form class="toolbar" method="get">
+  {{if $d.Search}}
   <input type="search" name="q" value="{{$d.Query}}" placeholder="Search {{$d.Label}}" aria-label="Search">
   {{if $d.Mine}}<input type="hidden" name="mine" value="1">{{end}}
+  {{range $d.Facets}}{{$n := .Name}}{{range .Groups}}{{range .Options}}{{if .Selected}}<input type="hidden" name="{{$n}}" value="{{.Value}}">{{end}}{{end}}{{end}}{{end}}
   <button class="btn ghost" type="submit">Search</button>
+  {{end}}
   {{if $d.HasOwner}}
     <span class="seg">
       <a href="{{$d.AllURL}}"{{if not $d.Mine}} class="on"{{end}}>Everyone</a>
       <a href="{{$d.MineURL}}"{{if $d.Mine}} class="on"{{end}}>Mine</a>
     </span>
   {{end}}
-  {{template "facets" $d.Facets}}
 </form>
+{{template "facets" $d.Facets}}
 {{if $d.Filters}}<p class="filters">{{range $d.Filters}}<a class="chip" href="{{.URL}}">{{.Label}} ✕</a>{{end}}</p>{{end}}
 {{if $d.RankNote}}<p class="muted rank-note">{{$d.RankNote}}</p>{{end}}
 {{if $d.Table.Rows}}

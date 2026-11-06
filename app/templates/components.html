@@ -2,15 +2,15 @@
   Generic components rendered from the schema. Pages (in the app's theme) place
   them; the app's stylesheet styles them. Stable class names:
   .table-wrap .num .rank .tag .tag-<value> .field .has-error .err .help .req .check
-  .facets .facet-group .facet-name .facet .facet.sub .facet.on
+  .facets .facet-group .facet-name .facet .facet.sub .facet.on .facet.off .facet .count
 */}}
-{{define "facets"}}{{range .}}{{$name := .Name}}
-<fieldset class="facets">
-  <legend>{{.Label}}</legend>
-  {{range .Groups}}<div class="facet-group">{{if .Name}}<span class="facet-name">{{.Name}}</span>{{end}}
-    {{range .Options}}<label class="facet{{if .Depth}} sub{{end}}{{if .Selected}} on{{end}}"><input type="checkbox" name="{{$name}}" value="{{.Value}}"{{if .Selected}} checked{{end}}> {{.Label}}</label>{{end}}
-  </div>{{end}}
-</fieldset>{{end}}{{end}}
+{{define "facets"}}{{range .}}
+<section class="facets" aria-label="{{.Label}}">
+  <h2>{{.Label}}</h2>
+  {{range .Groups}}{{if .Collapse}}<details class="facet-group"{{if .Open}} open{{end}}><summary class="facet-name">{{.Name}}</summary>{{else}}<div class="facet-group">{{if .Name}}<span class="facet-name">{{.Name}}</span>{{end}}{{end}}
+    {{range .Options}}{{if .Disabled}}<span class="facet off{{if .Depth}} sub{{end}}">{{.Label}}</span>{{else}}<a class="facet{{if .Depth}} sub{{end}}{{if .Selected}} on{{end}}" href="{{.URL}}"{{if .Selected}} aria-pressed="true" title="Remove"{{end}}>{{if .Selected}}✓ {{end}}{{.Label}}{{if ge .Count 0}} <span class="count">{{.Count}}</span>{{end}}</a>{{end}}{{end}}
+  {{if .Collapse}}</details>{{else}}</div>{{end}}{{end}}
+</section>{{end}}{{end}}
 {{define "table"}}
 <div class="table-wrap">
 <table>

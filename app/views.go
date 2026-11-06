@@ -427,7 +427,10 @@ type formField struct {
 type option struct {
 	Value, Label string
 	Selected     bool
-	Depth        int // facets: nesting below a broader value
+	Depth        int    // facets: nesting below a broader value
+	URL          string // facets: adds or removes this value
+	Count        int    // facets: records left with this value added (-1: not counted)
+	Disabled     bool   // facets: adding it would leave nothing
 }
 
 type formGroup struct {

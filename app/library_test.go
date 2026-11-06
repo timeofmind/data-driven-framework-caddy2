@@ -67,10 +67,23 @@ func TestSharedLibrary(t *testing.T) {
 	if !strings.Contains(got, "Dune path") || strings.Contains(got, "Shore loop") || strings.Contains(got, "Woods walk") {
 		t.Error("Sand AND Forest should match only Dune path")
 	}
-	if !strings.Contains(got, `class="facet-name">Coast<`) || !strings.Contains(got, "Beach › Sand") ||
-		!strings.Contains(got, `value="`+itoa(forest)+`" checked`) {
-		t.Error("facets should be grouped by region, show nesting, and keep choices checked")
+	if !strings.Contains(got, `<details class="facet-group" open><summary class="facet-name">Coast</summary>`) || !strings.Contains(got, "Beach › Sand") ||
+		!strings.Contains(got, `class="facet sub on" href="/c/routes?terrain=`+itoa(forest)+`" aria-pressed="true"`) {
+		t.Error("facets: grouped by region, nested values marked sub, a chosen value links to removing it")
 	}
+	// Counts: with Forest chosen, adding Beach leaves 1 (Dune path); Sand is
+	// chosen; nothing else remains to add, so other values would be disabled.
+	got = list(ben, "?terrain="+itoa(forest))
+	if !strings.Contains(got, `href="/c/routes?terrain=`+itoa(forest)+`&amp;terrain=`+itoa(beach)+`">Beach <span class="count">1</span>`) {
+		t.Error("facet should link to adding Beach and count the 1 route left")
+	}
+	if strings.Contains(got, `type="search"`) {
+		t.Error("routes have search: false — no search box")
+	}
+	if got := list(ben, "?q=Shore"); !strings.Contains(got, "Woods walk") {
+		t.Error("q must be ignored when search is off")
+	}
+	got = list(ben, "?terrain="+itoa(sand)+"&terrain="+itoa(forest))
 	if !strings.Contains(got, "/c/routes/"+itoa(dune)+"?terrain=") {
 		t.Error("rows should carry the search into the record link")
 	}

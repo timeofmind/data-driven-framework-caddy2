@@ -133,14 +133,21 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .seg a.on { background: var(--accent); color: var(--accent-ink); }
 .filters { display: flex; gap: .4rem; flex-wrap: wrap; }
 .chip { background: var(--accent-soft); color: var(--ink); padding: .15rem .6rem; border-radius: 99px; font-size: .88rem; }
-.facets { flex-basis: 100%; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: .5rem .8rem .7rem; margin: .2rem 0 0; }
-.facets legend { font-weight: 600; padding: 0 .3rem; }
-.facet-group { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin-top: .4rem; }
+.facets { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: .6rem .8rem .8rem; margin: 0 0 .8rem; }
+.facets h2 { font-size: 1rem; margin: 0 0 .2rem; }
+.facet-group { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin-top: .45rem; }
 .facet-name { color: var(--muted); font-size: .85rem; min-width: 7rem; }
-.facet { white-space: nowrap; font-weight: 400; display: inline-flex; align-items: center; gap: .3rem; border: 1px solid var(--line); border-radius: 99px; padding: .15rem .65rem; font-size: .88rem; cursor: pointer; }
-.facet input { margin: 0; width: auto; padding: 0; }
-.facet.sub { font-size: .8rem; padding: .1rem .5rem; border-style: dashed; }
-.facet.on { background: var(--accent-soft); border-color: var(--accent); }
+details.facet-group { display: block; }
+details.facet-group > summary { cursor: pointer; color: var(--ink); font-weight: 600; font-size: .92rem; padding: .2rem 0; }
+details.facet-group[open] > summary { margin-bottom: .35rem; }
+details.facet-group > .facet { margin: 0 .3rem .35rem 0; }
+.facet { white-space: nowrap; display: inline-flex; align-items: center; gap: .35rem; border: 1px solid var(--line); border-radius: 99px; padding: .2rem .7rem; font-size: .88rem; color: var(--ink); text-decoration: none; }
+a.facet:hover { border-color: var(--accent); }
+.facet.sub { font-size: .8rem; padding: .12rem .55rem; border-style: dashed; }
+.facet.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); border-style: solid; }
+.facet.off { color: var(--muted); opacity: .55; }
+.facet .count { font-size: .75rem; color: var(--muted); }
+.facet.on .count { color: inherit; }
 .rank-note { font-size: .88rem; margin: -.3rem 0 .6rem; }
 .pager { display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-top: .8rem; }
 

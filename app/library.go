@@ -166,13 +166,20 @@ type facet struct {
 }
 
 type facetGroup struct {
-	Name    string
-	Options []option
+	Name     string
+	Options  []option
+	Collapse bool // shown closed until opened…
+	Open     bool // …unless it holds a chosen value
 }
 
-func (a *App) facets(rq *request, vals url.Values) ([]facet, error) {
+// facets builds each filter's choices as toggle links (no script needed: a
+// click adds or removes the value). base is the list's current query, so each
+// unchosen value can show how many records would remain with it added (for
+// match: all); values that would leave none are disabled.
+func (a *App) facets(rq *request, vals url.Values, base runtime.Query) ([]facet, error) {
 	c := rq.handle.Class
 	var out []facet
+	base.Limit, base.Offset = 0, 0
 	for _, f := range c.Filters {
 		val := a.Model.FilterValueClass(c, f)
 		vh, err := a.Reg.Class(val.Name)
@@ -187,17 +194,37 @@ func (a *App) facets(rq *request, vals url.Values) ([]facet, error) {
 		if err != nil {
 			return nil, err
 		}
+		chosenIDs := ids(vals[f.Name])
 		chosen := map[int64]bool{}
-		for _, id := range ids(vals[f.Name]) {
+		for _, id := range chosenIDs {
 			chosen[id] = true
 		}
+		counts := f.Match == "all" && len(recs) <= 150
+		toggle := func(id int64) string {
+			v := cloneValues(vals)
+			v.Del(f.Name)
+			v.Del("page")
+			for _, other := range chosenIDs {
+				if other != id {
+					v.Add(f.Name, strconv.FormatInt(other, 10))
+				}
+			}
+			if !chosen[id] {
+				v.Add(f.Name, strconv.FormatInt(id, 10))
+			}
+			return a.classURL(c) + encodeQuery(v)
+		}
 		groupTitle := map[int64]string{}
+		groupRank := map[string]int{} // groups follow their class's order_by
 		if f.GroupBy != "" {
 			if gh, err := a.Reg.Class(val.BelongsToVia(f.GroupBy).Target); err == nil {
 				if gq, ok := gh.Scope(runtime.Query{Limit: 500}, rq.p); ok {
 					gs, _ := gh.List(rq.ctx(), gq)
-					for _, g := range gs {
+					for i, g := range gs {
 						groupTitle[g.ID()] = g.Title()
+						if _, seen := groupRank[g.Title()]; !seen {
+							groupRank[g.Title()] = i + 1
+						}
 					}
 				}
 			}
@@ -223,12 +250,29 @@ func (a *App) facets(rq *request, vals url.Values) ([]facet, error) {
 		for g := range byGroup {
 			names = append(names, g)
 		}
-		sort.Strings(names)
+		sort.Slice(names, func(i, j int) bool {
+			ri, rj := groupRank[names[i]], groupRank[names[j]]
+			if ri != rj {
+				return ri < rj
+			}
+			return names[i] < names[j]
+		})
 		for _, g := range names {
 			var opts []option
 			var walk func(r *runtime.Record, depth int)
 			walk = func(r *runtime.Record, depth int) {
-				opts = append(opts, option{Value: strconv.FormatInt(r.ID(), 10), Label: r.Title(), Selected: chosen[r.ID()], Depth: depth})
+				o := option{Value: strconv.FormatInt(r.ID(), 10), Label: r.Title(), Selected: chosen[r.ID()], Depth: depth, URL: toggle(r.ID()), Count: -1}
+				if counts && !o.Selected {
+					conds, err := rq.handle.FilterConds(rq.ctx(), f, []int64{r.ID()})
+					if err == nil {
+						q := base
+						q.Where = append(append([]runtime.Cond{}, base.Where...), conds...)
+						if n, err := rq.handle.Count(rq.ctx(), q); err == nil {
+							o.Count, o.Disabled = n, n == 0
+						}
+					}
+				}
+				opts = append(opts, o)
 				if depth < 8 {
 					for _, k := range kids[r.ID()] {
 						walk(k, depth+1)
@@ -238,7 +282,11 @@ func (a *App) facets(rq *request, vals url.Values) ([]facet, error) {
 			for _, r := range byGroup[g] {
 				walk(r, 0)
 			}
-			fc.Groups = append(fc.Groups, facetGroup{Name: g, Options: opts})
+			fg := facetGroup{Name: g, Options: opts, Collapse: f.CollapseGroups && g != ""}
+			for _, o := range opts {
+				fg.Open = fg.Open || o.Selected
+			}
+			fc.Groups = append(fc.Groups, fg)
 		}
 		out = append(out, fc)
 	}

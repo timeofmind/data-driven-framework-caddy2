@@ -135,6 +135,7 @@ type listData struct {
 	FilterNote string
 	Facets     []facet
 	RankNote   string
+	Search     bool // free-text search offered (off with the class's search: false)
 }
 
 func (a *App) listQuery(rq *request) (runtime.Query, []link, string, error) {
@@ -175,7 +176,7 @@ func (a *App) listQuery(rq *request) (runtime.Query, []link, string, error) {
 		without.Del("page")
 		active = append(active, link{Label: label, URL: a.classURL(c) + encodeQuery(without)})
 	}
-	if search := strings.TrimSpace(vals.Get("q")); search != "" {
+	if search := strings.TrimSpace(vals.Get("q")); search != "" && !c.NoSearch {
 		if ds := c.DisplaySlot(); ds != nil && (ds.Type == "string" || ds.Type == "text") {
 			q.Where = append(q.Where, runtime.Cond{Field: ds.Name, Op: "like", Value: "%" + search + "%"})
 		}
@@ -248,7 +249,7 @@ func (a *App) list(rq *request) error {
 			t.Rows[i].URL += "?" + ctxVals.Encode()
 		}
 	}
-	facets, err := a.facets(rq, vals)
+	facets, err := a.facets(rq, vals, q)
 	if err != nil {
 		return err
 	}
@@ -256,7 +257,7 @@ func (a *App) list(rq *request) error {
 		Class: c, Label: plural(c.EffectiveLabel()), Desc: c.Description, Table: t, Total: total,
 		Page: pageNo, Pages: pages, Query: vals.Get("q"), Mine: vals.Get("mine") == "1",
 		HasOwner: ownerOf(c) != "" && rq.p != nil, Filters: filters, FilterNote: note,
-		Facets: facets, RankNote: rankNote,
+		Facets: facets, RankNote: rankNote, Search: !c.NoSearch,
 	}
 	if pageNo > 1 {
 		v := cloneValues(vals)
