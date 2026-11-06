@@ -415,6 +415,7 @@ func (a *App) detailFields(ctx context.Context, p *runtime.Principal, r *runtime
 		return nil, err
 	}
 	var out []field
+	a.Reg.LoadLinks(ctx, r) // when rules may read the record's links
 	for _, col := range cols {
 		if !runtime.SlotApplies(r, col.slot) {
 			continue // e.g. a zone field when intensity is set by race pace

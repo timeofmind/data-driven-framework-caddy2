@@ -62,6 +62,9 @@ func TestRules(t *testing.T) {
 
 	// Leg: path options come through the trip; when / required_when; check.
 	_, form, _ = b.get("/c/stages/new?trip_id=" + itoa(trip))
+	if !strings.Contains(form, `<option value="effort" selected>`) {
+		t.Error("a walk's new stage should default to effort (default_expr through the trip)")
+	}
 	if !strings.Contains(form, `hidden disabled>Road<`) || strings.Contains(form, `disabled>Canal towpath<`) ||
 		!strings.Contains(form, `data-dd-given="{&#34;trip.mode&#34;:&#34;walk&#34;}"`) {
 		t.Error("a stage of a walk should offer only walking paths, and be given the trip's mode")

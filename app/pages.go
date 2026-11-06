@@ -498,6 +498,7 @@ func (a *App) create(rq *request) error {
 		}
 	}
 	rec.Assign(prefill, ownerOf(c))
+	a.Reg.ApplyDefaults(rq.ctx(), rec) // defaults computed from links, e.g. the parent's sport
 	var errs runtime.FieldErrors
 	if rq.r.Method == http.MethodPost {
 		if err := rq.r.ParseForm(); err != nil {
