@@ -478,6 +478,7 @@ type formData struct {
 	Cancel  string
 	Submit  string
 	Message string
+	Rules   *formRules // schema rules applied in the browser, if the class has any
 }
 
 func (a *App) create(rq *request) error {
@@ -524,7 +525,7 @@ func (a *App) create(rq *request) error {
 	title := "New " + strings.ToLower(c.EffectiveLabel())
 	a.render(rq, "form", title, formData{
 		Label: c.EffectiveLabel(), Title: title, Groups: groups, Action: rq.r.URL.RequestURI(),
-		Cancel: a.classURL(c), Submit: "Save", Message: generalError(errs),
+		Cancel: a.classURL(c), Submit: "Save", Message: generalError(errs), Rules: a.formRules(rq.ctx(), rec),
 	})
 	return nil
 }
@@ -571,7 +572,7 @@ func (a *App) edit(rq *request) error {
 	title := "Edit " + rec.Title()
 	a.render(rq, "form", title, formData{
 		Label: c.EffectiveLabel(), Title: title, Groups: groups, Action: rq.r.URL.Path,
-		Cancel: a.recordURL(c, rec.ID()), Submit: "Save changes", Message: generalError(errs),
+		Cancel: a.recordURL(c, rec.ID()), Submit: "Save changes", Message: generalError(errs), Rules: a.formRules(rq.ctx(), rec),
 	})
 	return nil
 }

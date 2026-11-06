@@ -39,16 +39,32 @@ func TestRules(t *testing.T) {
 	}
 	trip := mustID(b.create("/c/trips/new", url.Values{"name": {"Canal"}, "mode": {"walk"}, "path": {"towpath"}, "kit_id": {itoa(boots.ID())}}))
 
-	// Edit form: options follow the saved mode.
+	// Edit form: options follow the saved mode — the rest are rendered hidden
+	// and disabled, for the browser rules to bring back if the mode changes.
 	_, form, _ = b.get("/c/trips/" + itoa(trip) + "/edit")
-	if strings.Contains(form, ">Cycleway<") || strings.Contains(form, "Bike (cycle)") || !strings.Contains(form, "Boots (walk)") {
+	if !strings.Contains(form, `value="cycleway" hidden disabled>Cycleway<`) || !strings.Contains(form, `hidden disabled>Bike (cycle)<`) ||
+		!strings.Contains(form, `data-dd-m="{&#34;mode&#34;:&#34;cycle&#34;}" hidden disabled>Bike`) || strings.Contains(form, `disabled>Boots (walk)<`) {
 		t.Error("edit form for a walk should offer only walking paths and kit")
+	}
+	if !strings.Contains(form, `data-dd-form="Trip"`) || !strings.Contains(form, `<script src="/_dd/rules.`) {
+		t.Error("forms with rules load the rules script")
+	}
+	src := form[strings.Index(form, `/_dd/rules.`):]
+	src = src[:strings.IndexByte(src, '"')]
+	code, js, hdr := b.get(src)
+	if code != http.StatusOK || !strings.Contains(js, "ddRules.start(") || !strings.Contains(hdr.Get("Cache-Control"), "immutable") ||
+		!strings.Contains(hdr.Get("Content-Security-Policy"), "script-src 'self'") {
+		t.Errorf("rules script: %d %v", code, hdr)
+	}
+	if code, _, _ := b.get("/_dd/rules.000000000000.js"); code != http.StatusNotFound {
+		t.Error("an old rules name is not found")
 	}
 
 	// Leg: path options come through the trip; when / required_when; check.
 	_, form, _ = b.get("/c/stages/new?trip_id=" + itoa(trip))
-	if strings.Contains(form, ">Road<") || !strings.Contains(form, "Canal towpath") {
-		t.Error("a leg of a walk should offer only walking paths")
+	if !strings.Contains(form, `hidden disabled>Road<`) || strings.Contains(form, `disabled>Canal towpath<`) ||
+		!strings.Contains(form, `data-dd-given="{&#34;trip.mode&#34;:&#34;walk&#34;}"`) {
+		t.Error("a stage of a walk should offer only walking paths, and be given the trip's mode")
 	}
 	code, body, _ = b.post("/c/stages/new?trip_id="+itoa(trip), url.Values{"trip_id": {itoa(trip)}, "by": {"time"}, "effort": {"7"}})
 	if code == http.StatusSeeOther || !strings.Contains(body, "is required") || !strings.Contains(body, "Give the stage") {

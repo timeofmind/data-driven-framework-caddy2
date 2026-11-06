@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -434,6 +435,7 @@ type option struct {
 	URL          string // facets: adds or removes this value
 	Count        int    // facets: records left with this value added (-1: not counted)
 	Disabled     bool   // facets: adding it would leave nothing
+	Match        string // relation options: the target's matched values as JSON, for rules in the browser
 }
 
 type formGroup struct {
@@ -491,7 +493,9 @@ func (a *App) formFor(ctx context.Context, p *runtime.Principal, c *model.Class,
 				ff.Checked = rec.Bool(f.Name)
 			case "select":
 				// An options rule (e.g. surfaces for the chosen sport) narrows the
-				// list; the current value stays so a mismatch is shown, not dropped.
+				// list: values that don't fit are rendered hidden and disabled, so
+				// the browser rules can bring them back when the sport changes. The
+				// current value stays so a mismatch is shown, not dropped.
 				var allowed map[string]bool
 				if len(s.Options) > 0 {
 					if vs := a.Reg.AllowedValues(ctx, rec, s); vs != nil {
@@ -502,10 +506,8 @@ func (a *App) formFor(ctx context.Context, p *runtime.Principal, c *model.Class,
 					}
 				}
 				for _, o := range f.Options {
-					if allowed != nil && !allowed[o.Value] {
-						continue
-					}
-					ff.Options = append(ff.Options, option{Value: o.Value, Label: o.Label, Selected: o.Value == ff.Value})
+					ff.Options = append(ff.Options, option{Value: o.Value, Label: o.Label, Selected: o.Value == ff.Value,
+						Disabled: allowed != nil && !allowed[o.Value]})
 				}
 				if !f.Required {
 					ff.Options = append([]option{{Value: "", Label: "—"}}, ff.Options...)
@@ -547,8 +549,10 @@ func (a *App) relationOptions(ctx context.Context, p *runtime.Principal, c *mode
 	}
 	current := rec.Int(slot)
 	q := runtime.Query{Limit: 300}
-	// match: only targets that fit the record (e.g. sub-activities of its sport).
-	q.Where = append(q.Where, a.Reg.MatchConds(ctx, rec, rel)...)
+	// match: targets that don't fit the record (e.g. sub-activities of another
+	// sport) are rendered hidden and disabled, for the browser rules to show
+	// again if the sport changes.
+	conds := a.Reg.MatchConds(ctx, rec, rel)
 	if owner := ownerOf(h.Class); ownLinksOnly(rel, h.Class) && p != nil && !p.Admin && !isAccessParent(c, slot) {
 		q.Where = append(q.Where, runtime.Eq(owner, p.ID))
 	}
@@ -564,24 +568,24 @@ func (a *App) relationOptions(ctx context.Context, p *runtime.Principal, c *mode
 	if err != nil {
 		return nil, err
 	}
-	if current != 0 && len(q.Where) > 0 {
-		found := false
-		for _, r := range recs {
-			found = found || r.ID() == current
-		}
-		if !found { // keep a linked row the rules now exclude, so saving reports it
-			if r, err := h.Load(ctx, current); err == nil {
-				recs = append(recs, r)
-			}
-		}
-	}
 	cache := map[int64]*runtime.Record{}
 	for _, r := range recs {
 		label := a.optionLabel(ctx, h, r, cache)
 		if cs := h.Class.Calendar; cs != "" && r.String(cs) != "" {
 			label = r.String(cs) + " · " + label
 		}
-		opts = append(opts, option{Value: fmt.Sprint(r.ID()), Label: label, Selected: r.ID() == current})
+		o := option{Value: fmt.Sprint(r.ID()), Label: label, Selected: r.ID() == current,
+			Disabled: r.ID() != current && !runtime.Matches(r, conds)}
+		if len(rel.Match) > 0 {
+			m := map[string]any{}
+			for _, as := range rel.Match {
+				m[as.Slot] = r.Values[as.Slot]
+			}
+			if b, err := json.Marshal(m); err == nil {
+				o.Match = string(b)
+			}
+		}
+		opts = append(opts, o)
 	}
 	return opts, nil
 }

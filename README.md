@@ -39,6 +39,18 @@ From that directory the handler serves:
   parent of a child form); enum `labels` and class `title` set the text shown; fields
   whose `when` does not hold are left off record pages. Every rule is enforced again on
   save, so forms stay correct without JavaScript.
+- **Rules in the browser** (framework v0.6): when the schema has rules, the handler
+  builds one script when the app loads — a small runtime (`app/rules.js`, no
+  libraries) plus the schema's rules — and serves it at `/_dd/rules.<hash>.js` with a
+  year-long immutable cache, so a schema change gives it a new name. As a form is
+  filled in it hides fields whose `when` fails, switches `required` with
+  `required_when`, and narrows select lists by `options` and `match` (options that
+  don't fit are rendered `hidden disabled`, and come back when the field they depend on
+  changes). The page's CSP allows only the site's own scripts (`script-src 'self'`;
+  no inline script, no eval). Themes that override `form.html` add
+  `{{template "rules" $d.Rules}}` inside the form; field wrappers need the
+  `data-dd-field` attribute the built-in `field` component sets. The runtime is tested
+  against the framework's expression conformance cases (`go test` runs it in goja).
 - **A JSON API** at `/api/v1/<resource>` with a generated OpenAPI 3 document.
 - **File uploads** into a class with an `import` block: built-in readers for FIT
   (Garmin, COROS, Suunto, Wahoo, Polar), GPX, TCX and timing-system CSV produce

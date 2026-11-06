@@ -3,6 +3,7 @@
 {{if $d.Message}}<p class="alert">{{$d.Message}}</p>{{end}}
 <form method="post" action="{{$d.Action}}" class="form">
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  {{template "rules" $d.Rules}}
   {{range $d.Groups}}
   <fieldset>
     {{if .Name}}<legend>{{.Name}}</legend>{{end}}

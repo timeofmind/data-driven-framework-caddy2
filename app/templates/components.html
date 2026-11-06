@@ -24,7 +24,7 @@
 </div>
 {{end}}
 {{define "field"}}
-<div class="field{{if .Error}} has-error{{end}}{{if eq2 .Type "textarea"}} wide{{end}}">
+<div class="field{{if .Error}} has-error{{end}}{{if eq2 .Type "textarea"}} wide{{end}}" data-dd-field="{{.Name}}">
   {{if eq2 .Type "checkbox"}}
     <label class="check"><input type="checkbox" name="{{.Name}}" value="1"{{if .Checked}} checked{{end}}> {{.Label}}</label>
   {{else}}
@@ -33,7 +33,7 @@
       <textarea id="f-{{.Name}}" name="{{.Name}}" rows="5"{{if .Required}} required{{end}}{{if .Placeholder}} placeholder="{{.Placeholder}}"{{end}}>{{.Value}}</textarea>
     {{else if eq2 .Type "select"}}
       <select id="f-{{.Name}}" name="{{.Name}}"{{if .Required}} required{{end}}>
-        {{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+        {{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}{{if .Match}} data-dd-m="{{.Match}}"{{end}}{{if .Disabled}} hidden disabled{{end}}>{{.Label}}</option>{{end}}
       </select>
     {{else}}
       <input id="f-{{.Name}}" type="{{.Type}}" name="{{.Name}}" value="{{.Value}}"{{if .Required}} required{{end}}{{if .Placeholder}} placeholder="{{.Placeholder}}"{{end}}{{if .Min}} min="{{.Min}}"{{end}}{{if .Max}} max="{{.Max}}"{{end}}{{if .Step}} step="{{.Step}}"{{end}}{{if .Pattern}} pattern="{{.Pattern}}"{{end}}{{if eq2 .Type "password"}} autocomplete="{{if eq2 .Name "password_confirm"}}new-password{{else}}new-password{{end}}"{{end}}{{if eq2 .Type "email"}} autocomplete="email"{{end}}>
@@ -42,3 +42,7 @@
   {{if .Error}}<p class="err">{{.Label}} {{.Error}}</p>{{else if .Help}}<p class="help">{{.Help}}</p>{{end}}
 </div>
 {{end}}
+
+{{/* Schema rules in the browser: place inside a form (see rules.js). */}}
+{{define "rules"}}{{with .}}<div hidden data-dd-form="{{.Class}}" data-dd-given="{{.Given}}"></div>
+<script src="{{.Script}}" defer></script>{{end}}{{end}}

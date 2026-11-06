@@ -64,6 +64,7 @@ type App struct {
 	limiter *limiter
 	log     *slog.Logger
 	admins  map[string]bool
+	rules   *clientRules
 }
 
 // New loads the schema, connects, brings the database up to date (never
@@ -137,6 +138,10 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		reg.Close()
 		return nil, err
 	}
+	if err := buildClientRules(a); err != nil {
+		reg.Close()
+		return nil, err
+	}
 	if a.views, err = loadViews(man.ThemeDir()); err != nil {
 		reg.Close()
 		return nil, err
@@ -198,13 +203,15 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "same-origin")
 	h.Set("X-Frame-Options", "DENY")
-	h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 
 	switch {
 	case path == "/":
 		a.wrap(rq, a.home)
 	case parts[0] == "static" && len(parts) >= 2:
 		a.static(rq, strings.Join(parts[1:], "/"))
+	case parts[0] == "_dd" && len(parts) == 2:
+		a.serveRules(rq, parts[1])
 	case path == "/signup" && a.auth != nil && a.man.signupEnabled():
 		a.wrap(rq, a.signup)
 	case path == "/login" && a.auth != nil:
