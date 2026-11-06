@@ -445,6 +445,15 @@ func (a *App) childSection(rq *request, parent *runtime.Record, rel *model.Relat
 			ch.AddURL = withSearch(ch.AddURL, rq.search)
 		}
 		ch.AddLbl = firstNonEmpty(rel.AddLabel, "Add "+strings.ToLower(label))
+		// An ordered list (sequence within this parent) can also take a new
+		// child at any position, moving the later ones down.
+		if seq := runtime.SequenceSlot(h.Class, via); seq != nil && total > 0 {
+			taken, err := a.Reg.SequenceTaken(rq.ctx(), h.Class, seq, []int64{parent.ID()}, 0)
+			if err == nil {
+				ch.Insert = &insertForm{Action: a.classURL(h.Class) + "/new", Via: via, Parent: parent.ID(),
+					Max: runtime.SequenceNext(taken[parent.ID()]), Label: "Add " + strings.ToLower(label) + " at position"}
+			}
+		}
 		if !runtime.AddAllowed(rel, parent) {
 			ch.AddURL = ""
 		}
@@ -531,6 +540,9 @@ func (a *App) create(rq *request) error {
 	}
 	label := a.Reg.ClassLabel(rq.ctx(), rec)
 	title := "New " + strings.ToLower(label)
+	if pos := insertPosition(rq, rec); pos > 0 {
+		title += fmt.Sprintf(" at position %d", pos)
+	}
 	a.render(rq, "form", title, formData{
 		Label: label, Title: title, Groups: groups, Action: rq.r.URL.RequestURI(),
 		Cancel: a.classURL(c), Submit: "Save", Message: generalError(errs), Rules: a.formRules(rq.ctx(), rec),
@@ -696,10 +708,38 @@ func (a *App) saveChecked(rq *request, rec *runtime.Record) error {
 		return errs
 	}
 	h := a.Reg.MustClass(c.Name)
+	if pos := insertPosition(rq, rec); pos > 0 {
+		for _, s := range c.AllSlots() {
+			if s.Sequence != "" && rec.Int(s.Sequence) != 0 {
+				if err := h.InsertAt(rq.ctx(), rec, s, pos); err != nil {
+					return friendlyDBError(err)
+				}
+				return nil
+			}
+		}
+	}
 	if err := h.Save(rq.ctx(), rec); err != nil {
 		return friendlyDBError(err)
 	}
 	return nil
+}
+
+// insertPosition is the position a new record of an ordered list was asked
+// to take (?_position=N), or 0 for "at the end".
+func insertPosition(rq *request, rec *runtime.Record) int64 {
+	if rec.Persisted() {
+		return 0
+	}
+	n, err := strconv.ParseInt(rq.r.URL.Query().Get(positionParam), 10, 64)
+	if err != nil || n < 1 {
+		return 0
+	}
+	for _, s := range rec.Class.AllSlots() {
+		if s.Sequence != "" {
+			return n
+		}
+	}
+	return 0
 }
 
 func (a *App) checkLinks(ctx context.Context, p *runtime.Principal, rec *runtime.Record) runtime.FieldErrors {

@@ -191,3 +191,6 @@ a.facet:hover { border-color: var(--accent); }
   .cal-head div { padding: .3rem .2rem; font-size: .7rem; }
   .seg { margin-left: 0; }
 }
+
+.insert-at { display: inline-flex; gap: .4rem; align-items: center; margin-left: .5rem; font-size: .9rem; }
+.insert-at input[type=number] { width: 4.5rem; display: inline-block; }

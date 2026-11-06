@@ -23,7 +23,7 @@
 <section class="card">
   <div class="card-head">
     <h2>{{.Label}}</h2>
-    <div>{{if .More}}<a href="{{.More}}">See all</a>{{end}} {{if .AddURL}}<a class="btn small" href="{{.AddURL}}">{{.AddLbl}}</a>{{end}}</div>
+    <div>{{if .More}}<a href="{{.More}}">See all</a>{{end}} {{if .AddURL}}<a class="btn small" href="{{.AddURL}}">{{.AddLbl}}</a>{{end}} {{template "insert" .Insert}}</div>
   </div>
   {{if .Table.Rows}}{{template "table" .Table}}{{else}}<p class="muted">{{.Empty}}</p>{{end}}
 </section>

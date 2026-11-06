@@ -46,3 +46,10 @@
 {{/* Schema rules in the browser: place inside a form (see rules.js). */}}
 {{define "rules"}}{{with .}}<div hidden data-dd-form="{{.Class}}" data-dd-given="{{.Given}}"></div>
 <script src="{{.Script}}" defer></script>{{end}}{{end}}
+
+{{/* Ordered lists: add a child at a chosen position (detail pages, inside a section head). */}}
+{{define "insert"}}{{with .}}<form class="insert-at" method="get" action="{{.Action}}">
+  <input type="hidden" name="{{.Via}}" value="{{.Parent}}">
+  <label>{{.Label}} <input type="number" name="_position" min="1" max="{{.Max}}" value="1" required></label>
+  <button class="btn small ghost" type="submit">Add</button>
+</form>{{end}}{{end}}

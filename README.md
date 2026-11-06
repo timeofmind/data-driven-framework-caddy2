@@ -51,6 +51,10 @@ From that directory the handler serves:
   `{{template "rules" $d.Rules}}` inside the form; field wrappers need the
   `data-dd-field` attribute the built-in `field` component sets. The runtime is tested
   against the framework's expression conformance cases (`go test` runs it in goja).
+- **Ordered lists**: children numbered by a `sequence` slot show the number as a column,
+  and their section offers "Add … at position" next to Add; the new record takes that
+  position (`?_position=N` on the new form) and later ones move down. Themes that
+  override `detail.html` add `{{template "insert" .Insert}}` in each section's head.
 - **Calendar feed**: `/calendar/feed` gives each signed-in person a private iCalendar
   link (`/calendar/feed/<token>.ics`) to subscribe to from Google Calendar ("From URL"),
   Apple Calendar or Outlook: everything on their personal calendar from six months back
