@@ -168,3 +168,33 @@ func TestCalendarFeed(t *testing.T) {
 		t.Errorf("feed page needs sign-in: %d", code)
 	}
 }
+
+// TestLabelWhen: a stage is a "Segment" on a cycling trip — in the trip's
+// section, its add button, the new form, its page and its fields.
+func TestLabelWhen(t *testing.T) {
+	_, srv := newTestApp(t)
+	b := newBrowser(t, srv)
+	b.signup("ann@example.org", "Ann")
+	ride := mustID(b.create("/c/trips/new", url.Values{"name": {"Ride"}, "mode": {"cycle"}, "path": {"road"}}))
+	walk := mustID(b.create("/c/trips/new", url.Values{"name": {"Walk"}, "mode": {"walk"}, "path": {"footpath"}}))
+	_, form, _ := b.get("/c/stages/new?trip_id=" + itoa(ride))
+	if !strings.Contains(form, "New segment") || !strings.Contains(form, "Km ridden") {
+		t.Errorf("new form: title and field label follow the trip")
+	}
+	seg := mustID(b.create("/c/stages/new?trip_id="+itoa(ride), url.Values{"trip_id": {itoa(ride)}, "km": {"12"}, "by": {"time"}, "minutes": {"30"}}))
+	_, page, _ := b.get("/c/trips/" + itoa(ride))
+	if !strings.Contains(page, "<h2>Segments</h2>") || !strings.Contains(page, "Add segment") || !strings.Contains(page, ">Km ridden<") {
+		t.Errorf("a cycling trip's section should say Segments / Add segment / Km ridden")
+	}
+	if !strings.Contains(page, "<th>Minutes</th>") || strings.Contains(page, "<th>Effort</th>") {
+		t.Errorf("columns that apply to no row (effort, for a timed segment) are left out")
+	}
+	_, page, _ = b.get("/c/trips/" + itoa(walk))
+	if strings.Contains(page, "Segment") || !strings.Contains(page, "Add stage") {
+		t.Errorf("a walk keeps Stages")
+	}
+	_, page, _ = b.get("/c/stages/" + itoa(seg))
+	if !strings.Contains(page, "Segment") || !strings.Contains(page, "Km ridden") {
+		t.Errorf("record page uses the context labels")
+	}
+}

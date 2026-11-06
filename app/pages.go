@@ -333,7 +333,7 @@ func (a *App) detail(rq *request) error {
 	if err != nil {
 		return err
 	}
-	d := detailData{Class: c, Label: c.EffectiveLabel(), Title: rec.Title(), Fields: fields, ListURL: a.classURL(c)}
+	d := detailData{Class: c, Label: a.Reg.ClassLabel(rq.ctx(), rec), Title: rec.Title(), Fields: fields, ListURL: a.classURL(c)}
 	if !a.navigable(c) {
 		if pr, err := a.Reg.MustClass(c.Name).Parent(rq.ctx(), rec, c.Access.Parent); err == nil {
 			d.ListURL = a.recordURL(pr.Class, pr.ID())
@@ -414,17 +414,22 @@ func (a *App) childSection(rq *request, parent *runtime.Record, rel *model.Relat
 			recs = recs[:100]
 		}
 	}
+	// A child about to be added here stands in for "a child of this parent"
+	// when labels depend on context (Reps in a resistance workout's set).
+	probe := h.New(map[string]any{via: parent.ID()})
+	label := a.Reg.ClassLabel(rq.ctx(), probe)
 	t, err := a.buildTable(rq.ctx(), rq.p, h.Class, recs, via)
 	if err != nil {
 		return nil, err
 	}
+	a.relabelColumns(rq.ctx(), &t, h.Class, via, probe)
 	if ranked {
 		t.Columns = append([]string{"#"}, t.Columns...)
 		for i := range t.Rows {
 			t.Rows[i].Cells = append([]cell{{Text: strconv.Itoa(i + 1), Class: "num rank", NoLink: true}}, t.Rows[i].Cells...)
 		}
 	}
-	ch := &child{Label: firstNonEmpty(rel.Label, plural(h.Class.EffectiveLabel())), Table: t}
+	ch := &child{Label: firstNonEmpty(rel.Label, plural(label)), Table: t}
 	if total > len(recs) && a.navigable(h.Class) {
 		ch.More = fmt.Sprintf("%s?%s=%d", a.classURL(h.Class), via, parent.ID())
 	}
@@ -439,7 +444,7 @@ func (a *App) childSection(rq *request, parent *runtime.Record, rel *model.Relat
 		if len(a.Model.UsesByLink(h.Class.Name, via)) > 0 {
 			ch.AddURL = withSearch(ch.AddURL, rq.search)
 		}
-		ch.AddLbl = firstNonEmpty(rel.AddLabel, "Add "+strings.ToLower(h.Class.EffectiveLabel()))
+		ch.AddLbl = firstNonEmpty(rel.AddLabel, "Add "+strings.ToLower(label))
 		if !runtime.AddAllowed(rel, parent) {
 			ch.AddURL = ""
 		}
@@ -524,9 +529,10 @@ func (a *App) create(rq *request) error {
 	if err != nil {
 		return err
 	}
-	title := "New " + strings.ToLower(c.EffectiveLabel())
+	label := a.Reg.ClassLabel(rq.ctx(), rec)
+	title := "New " + strings.ToLower(label)
 	a.render(rq, "form", title, formData{
-		Label: c.EffectiveLabel(), Title: title, Groups: groups, Action: rq.r.URL.RequestURI(),
+		Label: label, Title: title, Groups: groups, Action: rq.r.URL.RequestURI(),
 		Cancel: a.classURL(c), Submit: "Save", Message: generalError(errs), Rules: a.formRules(rq.ctx(), rec),
 	})
 	return nil
@@ -573,7 +579,7 @@ func (a *App) edit(rq *request) error {
 	}
 	title := "Edit " + rec.Title()
 	a.render(rq, "form", title, formData{
-		Label: c.EffectiveLabel(), Title: title, Groups: groups, Action: rq.r.URL.Path,
+		Label: a.Reg.ClassLabel(rq.ctx(), rec), Title: title, Groups: groups, Action: rq.r.URL.Path,
 		Cancel: a.recordURL(c, rec.ID()), Submit: "Save changes", Message: generalError(errs), Rules: a.formRules(rq.ctx(), rec),
 	})
 	return nil
@@ -605,7 +611,7 @@ func (a *App) remove(rq *request) error {
 		http.Redirect(rq.w, rq.r, a.classURL(c), http.StatusSeeOther)
 		return nil
 	}
-	msg := fmt.Sprintf("Delete %s “%s”? This cannot be undone.", strings.ToLower(c.EffectiveLabel()), rec.Title())
+	msg := fmt.Sprintf("Delete %s “%s”? This cannot be undone.", strings.ToLower(a.Reg.ClassLabel(rq.ctx(), rec)), rec.Title())
 	var cascades []string
 	for _, rel := range c.AllRelationships() {
 		if rel.IsHasMany() {

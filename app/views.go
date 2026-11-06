@@ -218,6 +218,7 @@ type row struct {
 type table struct {
 	Columns []string
 	Rows    []row
+	cols    []column // the columns shown, for relabelling
 }
 
 type column struct {
@@ -260,11 +261,11 @@ func (a *App) listColumns(c *model.Class, skip string) []column {
 		}
 		return oi < oj
 	})
-	if len(cols) > 8 {
-		cols = cols[:8]
-	}
 	return cols
 }
+
+// maxColumns is how many columns a table shows.
+const maxColumns = 8
 
 func ownerOf(c *model.Class) string {
 	if c.Access == nil {
@@ -327,11 +328,35 @@ func (a *App) resolveTitles(ctx context.Context, p *runtime.Principal, recs []*r
 
 func (a *App) buildTable(ctx context.Context, p *runtime.Principal, c *model.Class, recs []*runtime.Record, skip string) (table, error) {
 	cols := a.listColumns(c, skip)
+	// Leave out columns whose field doesn't apply to any row shown (e.g. a
+	// distance column in a set of resistance reps), then keep the first few.
+	hasWhen := false
+	for _, col := range cols {
+		hasWhen = hasWhen || col.slot.When != nil
+	}
+	if hasWhen && len(recs) > 0 {
+		for _, r := range recs {
+			a.Reg.LoadLinks(ctx, r)
+		}
+		kept := cols[:0:0]
+		for _, col := range cols {
+			for _, r := range recs {
+				if runtime.SlotApplies(r, col.slot) {
+					kept = append(kept, col)
+					break
+				}
+			}
+		}
+		cols = kept
+	}
+	if len(cols) > maxColumns {
+		cols = cols[:maxColumns]
+	}
 	tt, err := a.resolveTitles(ctx, p, recs, cols)
 	if err != nil {
 		return table{}, err
 	}
-	var t table
+	t := table{cols: cols}
 	for _, col := range cols {
 		t.Columns = append(t.Columns, columnLabel(col))
 	}
@@ -424,7 +449,11 @@ func (a *App) detailFields(ctx context.Context, p *runtime.Principal, r *runtime
 		if ce.Text == "—" && col.slot.Type != "boolean" {
 			continue // leave empty values off the page
 		}
-		out = append(out, field{Label: columnLabel(col), Text: ce.Text, URL: ce.URL, Class: ce.Class, Tag: ce.Tag})
+		lbl := columnLabel(col)
+		if len(col.slot.LabelWhen) > 0 {
+			lbl = a.Reg.SlotLabel(ctx, r, col.slot)
+		}
+		out = append(out, field{Label: lbl, Text: ce.Text, URL: ce.URL, Class: ce.Class, Tag: ce.Tag})
 		if col.slot.Type == "text" {
 			out[len(out)-1].Class = "prose"
 		}
@@ -489,8 +518,12 @@ func (a *App) formFor(ctx context.Context, p *runtime.Principal, c *model.Class,
 		}
 		for _, f := range g.Fields {
 			s := c.Slot(f.Name)
+			lbl := f.Label
+			if len(s.LabelWhen) > 0 {
+				lbl = a.Reg.SlotLabel(ctx, rec, s)
+			}
 			ff := formField{
-				Name: f.Name, Label: f.Label, Type: f.Type, Placeholder: f.Placeholder, Help: f.Description,
+				Name: f.Name, Label: lbl, Type: f.Type, Placeholder: f.Placeholder, Help: f.Description,
 				Required: f.Required, Pattern: f.Pattern, Step: f.Step, Error: errs[f.Name],
 			}
 			if s.Type == "integer" || s.Type == "float" {
@@ -624,3 +657,13 @@ type child struct {
 }
 
 func urlQueryEscape(s string) string { return url.QueryEscape(s) }
+
+// relabelColumns applies field label rules (label_when) to a child table's
+// headers, using probe — a child of the parent shown — as the context.
+func (a *App) relabelColumns(ctx context.Context, t *table, c *model.Class, skip string, probe *runtime.Record) {
+	for i, col := range t.cols {
+		if len(col.slot.LabelWhen) > 0 && i < len(t.Columns) {
+			t.Columns[i] = a.Reg.SlotLabel(ctx, probe, col.slot)
+		}
+	}
+}
