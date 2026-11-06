@@ -133,6 +133,8 @@ type listData struct {
 	Calendar   string
 	Filters    []link
 	FilterNote string
+	Facets     []facet
+	RankNote   string
 }
 
 func (a *App) listQuery(rq *request) (runtime.Query, []link, string, error) {
@@ -193,7 +195,11 @@ func (a *App) listQuery(rq *request) (runtime.Query, []link, string, error) {
 			q.OrderBy = ob
 		}
 	}
-	return q, active, note, nil
+	chips, err := a.applyFilters(rq, &q, vals)
+	if err != nil {
+		return q, nil, "", err
+	}
+	return q, append(active, chips...), note, nil
 }
 
 func (a *App) list(rq *request) error {
@@ -215,6 +221,10 @@ func (a *App) list(rq *request) error {
 		}
 		return errForbidden
 	}
+	q, rankNote, err := a.rankByUsage(rq, q, rq.r.URL.Query())
+	if err != nil {
+		return err
+	}
 	total, err := rq.handle.Count(rq.ctx(), q)
 	if err != nil {
 		return err
@@ -232,10 +242,21 @@ func (a *App) list(rq *request) error {
 		return err
 	}
 	vals := rq.r.URL.Query()
+	// Rows remember the filter values they were found with (for usage ranking).
+	if ctxVals, _ := searchContext(c, vals); ctxVals != nil {
+		for i := range t.Rows {
+			t.Rows[i].URL += "?" + ctxVals.Encode()
+		}
+	}
+	facets, err := a.facets(rq, vals)
+	if err != nil {
+		return err
+	}
 	d := listData{
 		Class: c, Label: plural(c.EffectiveLabel()), Desc: c.Description, Table: t, Total: total,
 		Page: pageNo, Pages: pages, Query: vals.Get("q"), Mine: vals.Get("mine") == "1",
 		HasOwner: ownerOf(c) != "" && rq.p != nil, Filters: filters, FilterNote: note,
+		Facets: facets, RankNote: rankNote,
 	}
 	if pageNo > 1 {
 		v := cloneValues(vals)
@@ -328,6 +349,8 @@ func (a *App) detail(rq *request) error {
 		d.Private = true
 	}
 	d.IsMe = c.Auth != nil && rq.p != nil && rq.p.ID == rec.ID()
+	_, rq.search = searchContext(c, rq.r.URL.Query())
+	d.Actions = append(d.Actions, a.recordActions(rq, rec, rq.search)...)
 	for _, rel := range c.AllRelationships() {
 		if !rel.IsHasMany() {
 			continue
@@ -408,9 +431,12 @@ func (a *App) childSection(rq *request, parent *runtime.Record, rel *model.Relat
 	// ownerless children need write access to it.
 	// Profile pages (the auth class) only list; records are added elsewhere.
 	profile := parent.Class.Auth != nil
-	canLink := parentWritable || (ownerOf(h.Class) != "" && rq.p != nil)
+	canLink := parentWritable || (ownerOf(h.Class) != "" && canLinkChild(h.Class, via, parent, rq.p))
 	if !profile && canLink && runtime.CanCreate(h.Class, rq.p) && !a.alreadyHasOne(rq, h, via, parent.ID()) {
 		ch.AddURL = fmt.Sprintf("%s/new?%s=%d", a.classURL(h.Class), via, parent.ID())
+		if len(a.Model.UsesByLink(h.Class.Name, via)) > 0 {
+			ch.AddURL = withSearch(ch.AddURL, rq.search)
+		}
 		ch.AddLbl = firstNonEmpty(rel.AddLabel, "Add "+strings.ToLower(h.Class.EffectiveLabel()))
 		if !runtime.AddAllowed(rel, parent) {
 			ch.AddURL = ""
@@ -484,6 +510,7 @@ func (a *App) create(rq *request) error {
 				}
 				errs = fe
 			} else {
+				a.logLinkUses(rq.ctx(), rq.p, rec, ids([]string{rq.r.URL.Query().Get(searchParam)}))
 				http.Redirect(rq.w, rq.r, a.recordURL(c, rec.ID()), http.StatusSeeOther)
 				return nil
 			}
@@ -693,7 +720,7 @@ func (a *App) checkLinks(ctx context.Context, p *runtime.Principal, rec *runtime
 			if w, _ := a.Reg.Writable(ctx, target, p); !w {
 				errs[rel.Via] = "is not yours to change"
 			}
-		case !isAccessParent(c, rel.Via) && ownerOf(target.Class) != "" && !p.Admin:
+		case !isAccessParent(c, rel.Via) && ownLinksOnly(rel, target.Class) && !p.Admin:
 			if target.Int(ownerOf(target.Class)) != p.ID {
 				errs[rel.Via] = "must be one of your own"
 			}

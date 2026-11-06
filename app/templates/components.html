@@ -2,7 +2,15 @@
   Generic components rendered from the schema. Pages (in the app's theme) place
   them; the app's stylesheet styles them. Stable class names:
   .table-wrap .num .rank .tag .tag-<value> .field .has-error .err .help .req .check
+  .facets .facet-group .facet-name .facet .facet.sub .facet.on
 */}}
+{{define "facets"}}{{range .}}{{$name := .Name}}
+<fieldset class="facets">
+  <legend>{{.Label}}</legend>
+  {{range .Groups}}<div class="facet-group">{{if .Name}}<span class="facet-name">{{.Name}}</span>{{end}}
+    {{range .Options}}<label class="facet{{if .Depth}} sub{{end}}{{if .Selected}} on{{end}}"><input type="checkbox" name="{{$name}}" value="{{.Value}}"{{if .Selected}} checked{{end}}> {{.Label}}</label>{{end}}
+  </div>{{end}}
+</fieldset>{{end}}{{end}}
 {{define "table"}}
 <div class="table-wrap">
 <table>

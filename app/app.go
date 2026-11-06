@@ -241,6 +241,9 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 				a.wrap(rq, a.edit)
 			case len(parts) == 4 && parts[3] == "delete":
 				a.wrap(rq, a.remove)
+			case len(parts) == 4 && hd.Class.ActionByName(parts[3]) != nil:
+				name := parts[3]
+				a.wrap(rq, func(rq *request) error { return a.action(rq, name) })
 			default:
 				return false
 			}
@@ -262,6 +265,7 @@ type request struct {
 	csrf   string
 	handle *runtime.Handle
 	id     int64
+	search string // filter values the record was found with (see library.go)
 }
 
 func (rq *request) ctx() context.Context { return rq.r.Context() }

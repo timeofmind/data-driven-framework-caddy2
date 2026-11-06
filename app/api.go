@@ -174,6 +174,9 @@ func (a *App) apiSave(rq *request, rec *runtime.Record, status int) error {
 		}
 		return err
 	}
+	if status == http.StatusCreated {
+		a.logLinkUses(rq.ctx(), rq.p, rec, nil)
+	}
 	return writeJSON(rq, status, rec)
 }
 

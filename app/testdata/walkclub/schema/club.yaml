@@ -3,6 +3,7 @@ description: "Walk Club fixture"
 enums:
   Visibility: {values: [private, public], default: private}
   Pace: {values: [stroll, brisk, other], default: brisk}
+  UseKind: {values: [planned, copied]}
 classes:
   Member:
     display: name
@@ -25,8 +26,26 @@ classes:
       - {name: distance_km, type: float, min: 0}
       - {name: last_walked, type: date, read_only: true}
       - {name: visibility, type: enum, enum: Visibility, default: private}
+      - {name: based_on_id, type: integer, label: "Based on"}
     relationships:
-      belongs_to: [{target: Member, via: member_id, on_delete: cascade}]
+      belongs_to:
+        - {target: Member, via: member_id, on_delete: cascade}
+        - {target: Route, via: based_on_id, on_delete: set_null, link: readable}
+      has_many:
+        - {target: RouteTerrain, via: route_id, name: terrains, label: "Terrain", add_label: "Add terrain"}
+    filters:
+      - {name: terrain, label: "Terrain", via: terrains, slot: terrain_id, include_children: parent_id, group_by: region_id, rank_by_usage: true}
+    actions:
+      - {name: copy, label: "Copy route", copy: [terrains], set: {based_on_id: source.id, visibility: "'private'"}, when: "visibility == 'public'"}
+    usage:
+      log: RouteUse
+      via: route_id
+      kind: kind
+      filter: terrain
+      values: searched
+      uses:
+        - {kind: planned, link: Outing.route_id, record: outing_id}
+        - {kind: copied, action: copy, record: copy_id}
   Walk:
     display: title
     calendar: day

@@ -133,6 +133,15 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .seg a.on { background: var(--accent); color: var(--accent-ink); }
 .filters { display: flex; gap: .4rem; flex-wrap: wrap; }
 .chip { background: var(--accent-soft); color: var(--ink); padding: .15rem .6rem; border-radius: 99px; font-size: .88rem; }
+.facets { flex-basis: 100%; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: .5rem .8rem .7rem; margin: .2rem 0 0; }
+.facets legend { font-weight: 600; padding: 0 .3rem; }
+.facet-group { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin-top: .4rem; }
+.facet-name { color: var(--muted); font-size: .85rem; min-width: 7rem; }
+.facet { white-space: nowrap; font-weight: 400; display: inline-flex; align-items: center; gap: .3rem; border: 1px solid var(--line); border-radius: 99px; padding: .15rem .65rem; font-size: .88rem; cursor: pointer; }
+.facet input { margin: 0; width: auto; padding: 0; }
+.facet.sub { font-size: .8rem; padding: .1rem .5rem; border-style: dashed; }
+.facet.on { background: var(--accent-soft); border-color: var(--accent); }
+.rank-note { font-size: .88rem; margin: -.3rem 0 .6rem; }
 .pager { display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-top: .8rem; }
 
 /* upload */

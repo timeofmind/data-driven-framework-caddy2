@@ -26,6 +26,13 @@ From that directory the handler serves:
   relation picker and API call.
 - **Declared behaviour** from the schema: computed fields, calendar labels, on-save
   triggers, ranked (leaderboard) relationships, add-button labels and conditions.
+- **Shared libraries** from the schema's `filters`, `actions`, `usage` and belongs_to
+  `link: readable`: lists get a choice of filter values (grouped, nested values
+  matching their children, every chosen value required); a record found that way
+  carries the search to its copy action and to "add" links that use it; each use is
+  logged with the values searched for, and lists rank records by how many people chose
+  them with the same values (an explicit `?order=` replaces the ranking). Actions live
+  at `/c/<resource>/<id>/<action>` (GET confirms, POST runs).
 - **A JSON API** at `/api/v1/<resource>` with a generated OpenAPI 3 document.
 - **File uploads** into a class with an `import` block: built-in readers for FIT
   (Garmin, COROS, Suunto, Wahoo, Polar), GPX, TCX and timing-system CSV produce
@@ -90,8 +97,9 @@ A theme supplies `layout.html` (defining `layout`, which renders
 `{{template "content" .}}`) and any of the page templates `home`, `list`,
 `calendar`, `detail`, `form`, `confirm`, `login`, `signup`, `upload`, `error`, plus
 files under `static/` (served at `/static/…`). Anything the theme leaves out comes
-from the built-in default theme. Page templates use the components `table`, `field`
-and the page data documented in `app/views.go`. Calendar items and tags carry CSS
+from the built-in default theme. Page templates use the components `table`, `field`,
+`facets` (a list's filter choices, placed inside its search form) and the page data
+documented in `app/views.go` and `app/pages.go`. Calendar items and tags carry CSS
 classes for enum values (`<slot>-<value>`, `tag-<value>`) so a theme can colour them.
 
 ## File readers

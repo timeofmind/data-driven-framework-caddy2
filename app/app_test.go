@@ -260,8 +260,10 @@ func TestThemeAndManifest(t *testing.T) {
 	// An app without a theme falls back to the built-in default.
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "schema"), 0o755)
-	src, _ := os.ReadFile(filepath.Join(fixtureApp, "schema", "club.yaml"))
-	os.WriteFile(filepath.Join(dir, "schema", "club.yaml"), src, 0o644)
+	for _, f := range []string{"club.yaml", "library.yaml"} {
+		src, _ := os.ReadFile(filepath.Join(fixtureApp, "schema", f))
+		os.WriteFile(filepath.Join(dir, "schema", f), src, 0o644)
+	}
 	os.WriteFile(filepath.Join(dir, "app.yaml"), []byte("name: Bare\n"), 0o644)
 	_, srv2 := newTestAppAt(t, dir)
 	b2 := newBrowser(t, srv2)

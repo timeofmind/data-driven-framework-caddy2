@@ -427,6 +427,7 @@ type formField struct {
 type option struct {
 	Value, Label string
 	Selected     bool
+	Depth        int // facets: nesting below a broader value
 }
 
 type formGroup struct {
@@ -525,7 +526,7 @@ func (a *App) relationOptions(ctx context.Context, p *runtime.Principal, c *mode
 		return nil, err
 	}
 	q := runtime.Query{Limit: 300}
-	if owner := ownerOf(h.Class); owner != "" && p != nil && !p.Admin && !isAccessParent(c, slot) {
+	if owner := ownerOf(h.Class); ownLinksOnly(rel, h.Class) && p != nil && !p.Admin && !isAccessParent(c, slot) {
 		q.Where = append(q.Where, runtime.Eq(owner, p.ID))
 	}
 	q, ok := h.Scope(q, p)
@@ -540,8 +541,9 @@ func (a *App) relationOptions(ctx context.Context, p *runtime.Principal, c *mode
 	if err != nil {
 		return nil, err
 	}
+	cache := map[int64]*runtime.Record{}
 	for _, r := range recs {
-		label := r.Title()
+		label := a.optionLabel(ctx, h, r, cache)
 		if cs := h.Class.Calendar; cs != "" && r.String(cs) != "" {
 			label = r.String(cs) + " · " + label
 		}

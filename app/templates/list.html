@@ -19,8 +19,10 @@
       <a href="{{$d.MineURL}}"{{if $d.Mine}} class="on"{{end}}>Mine</a>
     </span>
   {{end}}
+  {{template "facets" $d.Facets}}
 </form>
 {{if $d.Filters}}<p class="filters">{{range $d.Filters}}<a class="chip" href="{{.URL}}">{{.Label}} ✕</a>{{end}}</p>{{end}}
+{{if $d.RankNote}}<p class="muted rank-note">{{$d.RankNote}}</p>{{end}}
 {{if $d.Table.Rows}}
   {{template "table" $d.Table}}
   <p class="pager">
