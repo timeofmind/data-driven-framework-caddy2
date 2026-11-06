@@ -86,3 +86,32 @@ func TestRules(t *testing.T) {
 		t.Error("leg page should show minutes, not effort")
 	}
 }
+
+// TestCalendarRanges: a multi-day meet shows on each of its days in its own
+// calendar; it stays off its creator's personal calendar (personal_calendar:
+// false), where an entry — dated through its link to the meet — shows instead.
+func TestCalendarRanges(t *testing.T) {
+	_, srv := newTestApp(t)
+	b := newBrowser(t, srv)
+	b.signup("ann@example.org", "Ann")
+	meet := mustID(b.create("/c/meets/new", url.Values{"name": {"Coast relays"}, "start_date": {"2027-03-12"}, "end_date": {"2027-03-14"}}))
+	_, cal, _ := b.get("/c/meets?view=calendar&month=2027-03")
+	if strings.Count(cal, ">Coast relays<") != 3 {
+		t.Errorf("a three-day meet should show on three days, got %d", strings.Count(cal, ">Coast relays<"))
+	}
+	_, mine, _ := b.get("/calendar?month=2027-03")
+	if strings.Contains(mine, "Coast relays") {
+		t.Error("adding a meet must not put it on your own calendar")
+	}
+	b.create("/c/meet-entries/new?meet_id="+itoa(meet), url.Values{"meet_id": {itoa(meet)}})
+	_, mine, _ = b.get("/calendar?month=2027-03")
+	if strings.Count(mine, ">Coast relays (entered)<") != 3 {
+		t.Errorf("an entry shows on each day of its meet, got %d", strings.Count(mine, ">Coast relays (entered)<"))
+	}
+	if _, page, _ := b.get("/c/meet-entries/1"); !strings.Contains(page, "<h1>Coast relays</h1>") {
+		t.Error("an entry's page is titled by its meet (title through the link)")
+	}
+	if _, list, _ := b.get("/c/meet-entries"); !strings.Contains(list, "Coast relays") {
+		t.Error("entries are listed by their meet's name")
+	}
+}

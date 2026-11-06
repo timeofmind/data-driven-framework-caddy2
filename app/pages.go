@@ -98,7 +98,7 @@ func (a *App) homeSections() []HomeSection {
 // there are none, the most recent ones.
 func (a *App) upcomingOrRecent(ctx context.Context, h *runtime.Handle, q runtime.Query, today string) ([]*runtime.Record, error) {
 	c := h.Class
-	if c.Calendar == "" {
+	if c.Calendar == "" || c.CalendarIsPath() {
 		return h.List(ctx, q)
 	}
 	up := q
@@ -316,6 +316,7 @@ func (a *App) loadReadable(rq *request) (*runtime.Record, error) {
 	if !ok {
 		return nil, errNotFound // don't reveal that a private record exists
 	}
+	a.Reg.LoadLinks(rq.ctx(), rec) // titles and rules may read linked records
 	return rec, nil
 }
 
@@ -818,24 +819,17 @@ func calendarGrid(month time.Time) [][]calDay {
 func (a *App) fillCalendar(rq *request, weeks [][]calDay, h *runtime.Handle, extra []runtime.Cond, cls string) error {
 	c := h.Class
 	from, to := weeks[0][0].Date, weeks[len(weeks)-1][6].Date
-	q := runtime.Query{Where: append([]runtime.Cond{
-		{Field: c.Calendar, Op: ">=", Value: from},
-		{Field: c.Calendar, Op: "<=", Value: to + " 23:59:59"},
-	}, extra...), Limit: 1000, OrderBy: c.Calendar + " asc"}
-	q, ok := h.Scope(q, rq.p)
+	q, ok := h.Scope(runtime.Query{Where: extra, Limit: 1000}, rq.p)
 	if !ok {
 		return nil
 	}
-	recs, err := h.List(rq.ctx(), q)
+	spans, err := h.CalendarSpans(rq.ctx(), q, from, to)
 	if err != nil {
 		return err
 	}
 	byDate := map[string][]calItem{}
-	for _, r := range recs {
-		d := r.String(c.Calendar)
-		if len(d) > 10 {
-			d = d[:10]
-		}
+	for _, sp := range spans {
+		r := sp.Rec
 		// Every enum value becomes a CSS class (<slot>-<value>) for the theme to style.
 		ic := cls + " class-" + strings.ToLower(c.Name)
 		for _, s := range c.AllSlots() {
@@ -843,7 +837,11 @@ func (a *App) fillCalendar(rq *request, weeks [][]calDay, h *runtime.Handle, ext
 				ic += " " + s.Name + "-" + r.String(s.Name)
 			}
 		}
-		byDate[d] = append(byDate[d], calItem{Text: runtime.CalendarText(r), URL: a.recordURL(c, r.ID()), Class: ic})
+		it := calItem{Text: runtime.CalendarText(r), URL: a.recordURL(c, r.ID()), Class: ic}
+		// A record covering several days (a three-day meet) shows on each.
+		for d := sp.From; d <= sp.To; d = nextDay(d) {
+			byDate[d] = append(byDate[d], it)
+		}
 	}
 	for wi := range weeks {
 		for di := range weeks[wi] {
@@ -878,7 +876,7 @@ func (a *App) classCalendar(rq *request) error {
 	if err := a.fillCalendar(rq, weeks, rq.handle, extra, "item"); err != nil {
 		return err
 	}
-	if runtime.CanCreate(c, rq.p) {
+	if runtime.CanCreate(c, rq.p) && !c.CalendarIsPath() {
 		for wi := range weeks {
 			for di := range weeks[wi] {
 				weeks[wi][di].AddURL = fmt.Sprintf("%s/new?%s=%s", a.classURL(c), c.Calendar, weeks[wi][di].Date)
@@ -907,7 +905,7 @@ func (a *App) calendar(rq *request) error {
 	d := calendarData{Title: "Your calendar", Month: month.Format("January 2006"), Weeks: weeks, Mine: true}
 	var addClass *model.Class
 	for _, c := range a.Model.ConcreteClasses() {
-		if c.Calendar == "" || ownerOf(c) == "" {
+		if c.Calendar == "" || ownerOf(c) == "" || c.NotPersonal {
 			continue
 		}
 		cls := fmt.Sprintf("item series-%d", len(d.Legend)%6)
@@ -915,7 +913,7 @@ func (a *App) calendar(rq *request) error {
 			return err
 		}
 		d.Legend = append(d.Legend, link{Label: plural(c.EffectiveLabel()), URL: a.classURL(c) + "?mine=1"})
-		if addClass == nil && runtime.CanCreate(c, rq.p) {
+		if addClass == nil && runtime.CanCreate(c, rq.p) && !c.CalendarIsPath() {
 			addClass = c
 		}
 	}
@@ -1091,4 +1089,13 @@ func firstNonEmpty(v ...string) string {
 		}
 	}
 	return ""
+}
+
+// nextDay returns the day after d (YYYY-MM-DD); an unreadable date ends a loop.
+func nextDay(d string) string {
+	t, err := time.Parse("2006-01-02", d)
+	if err != nil {
+		return "9999-12-31~"
+	}
+	return t.AddDate(0, 0, 1).Format("2006-01-02")
 }
