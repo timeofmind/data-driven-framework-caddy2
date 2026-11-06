@@ -292,6 +292,13 @@ var ddRules = (function () {
           return conds.every(function (c) { return equal(norm(d[c[0]]), c[1]); });
         }) || changed;
       }
+      // A group (fieldset) whose fields are all hidden is hidden too.
+      var sets = form.querySelectorAll("fieldset");
+      for (var f = 0; f < sets.length; f++) {
+        var ws = sets[f].querySelectorAll("[data-dd-field]"), any = ws.length === 0;
+        for (var k = 0; k < ws.length && !any; k++) any = !ws[k].hidden;
+        sets[f].style.display = any ? "" : "none";
+      }
       (cls.checks || []).forEach(function (ck) {
         el = ck.slot && form.elements.namedItem(ck.slot);
         if (el && el.setCustomValidity) el.setCustomValidity(holds(ck.expr, env) ? "" : ck.message);
