@@ -68,6 +68,21 @@ var ddRules = (function () {
   }
 
   function pad(n) { return n < 10 ? "0" + n : String(n); }
+
+  // Dates are YYYY-MM-DD strings (a datetime's time is ignored), counted in
+  // whole UTC days so daylight-saving changes cannot shift them.
+  var dateRE = /^(\d{4})-(\d{2})-(\d{2})/;
+  function toDate(v) {
+    var m = typeof v === "string" && dateRE.exec(v);
+    if (!m) return null;
+    var t = Date.UTC(+m[1], +m[2] - 1, +m[3]), d = new Date(t);
+    if (d.getUTCFullYear() !== +m[1] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) return null;
+    return Math.round(t / 86400000);
+  }
+  function fromDays(n) {
+    var d = new Date(n * 86400000);
+    return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate());
+  }
   function formatDuration(sec) {
     var neg = "";
     if (sec < 0) { neg = "-"; sec = -sec; }
@@ -144,6 +159,15 @@ var ddRules = (function () {
       case "lower": return typeof a[0] === "string" ? a[0].toLowerCase() : null;
       case "upper": return typeof a[0] === "string" ? a[0].toUpperCase() : null;
       case "abs": return typeof a[0] === "number" ? Math.abs(a[0]) : null;
+      case "add_days": {
+        var d = toDate(a[0]);
+        if (d === null || typeof a[1] !== "number") return null;
+        return fromDays(d + goRound(a[1]));
+      }
+      case "days_between": {
+        var x = toDate(a[0]), y = toDate(a[1]);
+        return x === null || y === null ? null : y - x;
+      }
       case "min": case "max": {
         var best = null;
         for (i = 0; i < a.length; i++) {

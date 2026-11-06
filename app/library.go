@@ -366,8 +366,20 @@ func (a *App) action(rq *request, name string) error {
 		})
 		return nil
 	}
+	// Links the copier may not use (e.g. someone's private workout scheduled
+	// in their public plan) are left out of the copy when they are optional;
+	// a required one stops the copy.
 	check := func(r *runtime.Record) error {
-		if errs := a.checkLinks(rq.ctx(), rq.p, r); errs != nil {
+		errs := a.checkLinks(rq.ctx(), rq.p, r)
+		for slot := range errs {
+			if s := r.Class.Slot(slot); s != nil && !s.Required {
+				if rel := r.Class.BelongsToVia(slot); rel != nil && !rel.Required {
+					r.Values[slot] = nil
+					delete(errs, slot)
+				}
+			}
+		}
+		if len(errs) > 0 {
 			return errs
 		}
 		return nil
