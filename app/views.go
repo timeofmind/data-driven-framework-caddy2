@@ -401,6 +401,9 @@ func (a *App) detailFields(ctx context.Context, p *runtime.Principal, r *runtime
 	}
 	var out []field
 	for _, col := range cols {
+		if !runtime.SlotApplies(r, col.slot) {
+			continue // e.g. a zone field when intensity is set by race pace
+		}
 		ce := a.cellFor(r, col, tt)
 		if ce.Text == "—" && col.slot.Type != "boolean" {
 			continue // leave empty values off the page
@@ -487,14 +490,28 @@ func (a *App) formFor(ctx context.Context, p *runtime.Principal, c *model.Class,
 			case "checkbox":
 				ff.Checked = rec.Bool(f.Name)
 			case "select":
+				// An options rule (e.g. surfaces for the chosen sport) narrows the
+				// list; the current value stays so a mismatch is shown, not dropped.
+				var allowed map[string]bool
+				if len(s.Options) > 0 {
+					if vs := a.Reg.AllowedValues(ctx, rec, s); vs != nil {
+						allowed = map[string]bool{ff.Value: true}
+						for _, v := range vs {
+							allowed[v] = true
+						}
+					}
+				}
 				for _, o := range f.Options {
+					if allowed != nil && !allowed[o.Value] {
+						continue
+					}
 					ff.Options = append(ff.Options, option{Value: o.Value, Label: o.Label, Selected: o.Value == ff.Value})
 				}
 				if !f.Required {
 					ff.Options = append([]option{{Value: "", Label: "—"}}, ff.Options...)
 				}
 			case "relation":
-				opts, err := a.relationOptions(ctx, p, c, f.Name, rec.Int(f.Name))
+				opts, err := a.relationOptions(ctx, p, c, f.Name, rec)
 				if err != nil {
 					return nil, err
 				}
@@ -522,13 +539,16 @@ func (a *App) formFor(ctx context.Context, p *runtime.Principal, c *model.Class,
 // relationOptions lists records that p may link to through FK slot. Targets
 // with an owner are limited to p's own rows (you link your own records to a
 // result, not someone else's); others to rows p can read.
-func (a *App) relationOptions(ctx context.Context, p *runtime.Principal, c *model.Class, slot string, current int64) ([]option, error) {
+func (a *App) relationOptions(ctx context.Context, p *runtime.Principal, c *model.Class, slot string, rec *runtime.Record) ([]option, error) {
 	rel := c.BelongsToVia(slot)
 	h, err := a.Reg.Class(rel.Target)
 	if err != nil {
 		return nil, err
 	}
+	current := rec.Int(slot)
 	q := runtime.Query{Limit: 300}
+	// match: only targets that fit the record (e.g. sub-activities of its sport).
+	q.Where = append(q.Where, a.Reg.MatchConds(ctx, rec, rel)...)
 	if owner := ownerOf(h.Class); ownLinksOnly(rel, h.Class) && p != nil && !p.Admin && !isAccessParent(c, slot) {
 		q.Where = append(q.Where, runtime.Eq(owner, p.ID))
 	}
@@ -543,6 +563,17 @@ func (a *App) relationOptions(ctx context.Context, p *runtime.Principal, c *mode
 	recs, err := h.List(ctx, q)
 	if err != nil {
 		return nil, err
+	}
+	if current != 0 && len(q.Where) > 0 {
+		found := false
+		for _, r := range recs {
+			found = found || r.ID() == current
+		}
+		if !found { // keep a linked row the rules now exclude, so saving reports it
+			if r, err := h.Load(ctx, current); err == nil {
+				recs = append(recs, r)
+			}
+		}
 	}
 	cache := map[int64]*runtime.Record{}
 	for _, r := range recs {

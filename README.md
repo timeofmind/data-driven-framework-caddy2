@@ -33,6 +33,12 @@ From that directory the handler serves:
   logged with the values searched for, and lists rank records by how many people chose
   them with the same values (an explicit `?order=` replaces the ranking). Actions live
   at `/c/<resource>/<id>/<action>` (GET confirms, POST runs).
+- **Rules** from the schema (framework v0.5): select lists offer only the enum values
+  an `options` rule allows and only the linked records a `match` allows, given the
+  record's current values (including values reached through its links, such as the
+  parent of a child form); enum `labels` and class `title` set the text shown; fields
+  whose `when` does not hold are left off record pages. Every rule is enforced again on
+  save, so forms stay correct without JavaScript.
 - **A JSON API** at `/api/v1/<resource>` with a generated OpenAPI 3 document.
 - **File uploads** into a class with an `import` block: built-in readers for FIT
   (Garmin, COROS, Suunto, Wahoo, Polar), GPX, TCX and timing-system CSV produce
