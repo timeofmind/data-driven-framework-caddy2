@@ -134,6 +134,10 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		reg.Close()
 		return nil, err
 	}
+	if err := a.createFeedTable(ctx); err != nil {
+		reg.Close()
+		return nil, err
+	}
 	if err := a.checkManifest(); err != nil {
 		reg.Close()
 		return nil, err
@@ -220,6 +224,10 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		a.wrap(rq, a.logout)
 	case path == "/me" && a.auth != nil:
 		a.wrap(rq, a.me)
+	case path == "/calendar/feed" && a.auth != nil:
+		a.wrap(rq, a.feedPage)
+	case strings.HasPrefix(path, "/calendar/feed/") && a.auth != nil:
+		a.feedICS(w, r, strings.TrimPrefix(path, "/calendar/feed/"))
 	case path == "/calendar":
 		a.wrap(rq, a.calendar)
 	case path == "/upload" && a.uploads != nil:

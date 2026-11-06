@@ -25,7 +25,7 @@ import (
 //go:embed templates/*.html static/*
 var embedded embed.FS
 
-var pageNames = []string{"home", "list", "calendar", "detail", "form", "confirm", "login", "signup", "upload", "error"}
+var pageNames = []string{"home", "list", "calendar", "detail", "form", "confirm", "login", "signup", "upload", "error", "feed"}
 
 type views struct {
 	pages     map[string]*template.Template

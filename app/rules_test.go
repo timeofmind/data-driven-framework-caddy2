@@ -3,8 +3,10 @@ package app
 import (
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestRules covers the schema rules in forms and pages: options narrowed by
@@ -113,5 +115,56 @@ func TestCalendarRanges(t *testing.T) {
 	}
 	if _, list, _ := b.get("/c/meet-entries"); !strings.Contains(list, "Coast relays") {
 		t.Error("entries are listed by their meet's name")
+	}
+}
+
+// TestCalendarFeed: the personal calendar as an iCalendar feed at a private
+// URL — entries span their meet's days, shared listings stay out, a reset
+// link cuts off the old one, and unknown tokens find nothing.
+func TestCalendarFeed(t *testing.T) {
+	_, srv := newTestApp(t)
+	b := newBrowser(t, srv)
+	b.signup("ann@example.org", "Ann")
+	meet := mustID(b.create("/c/meets/new", url.Values{"name": {"Coast relays; day, one"}, "start_date": {time.Now().AddDate(0, 1, 0).Format("2006-01-02")},
+		"end_date": {time.Now().AddDate(0, 1, 2).Format("2006-01-02")}}))
+	b.create("/c/meet-entries/new?meet_id="+itoa(meet), url.Values{"meet_id": {itoa(meet)}})
+	_, page, _ := b.get("/calendar/feed")
+	m := regexp.MustCompile(`value="(http[^"]+/calendar/feed/([0-9a-f]{64})\.ics)"`).FindStringSubmatch(page)
+	if m == nil {
+		t.Fatalf("feed page should show the private link:\n%s", page)
+	}
+	feedPath := "/calendar/feed/" + m[2] + ".ics"
+	anon := newBrowser(t, srv)
+	code, ics, hdr := anon.get(feedPath)
+	if code != http.StatusOK || !strings.HasPrefix(hdr.Get("Content-Type"), "text/calendar") {
+		t.Fatalf("feed: %d %v", code, hdr)
+	}
+	start := time.Now().AddDate(0, 1, 0).Format("20060102")
+	end := time.Now().AddDate(0, 1, 3).Format("20060102")
+	for _, want := range []string{"BEGIN:VCALENDAR\r\n", `SUMMARY:Coast relays\; day\, one (entered)` + "\r\n",
+		"DTSTART;VALUE=DATE:" + start + "\r\n", "DTEND;VALUE=DATE:" + end + "\r\n", "/c/meet-entries/", "END:VCALENDAR\r\n"} {
+		if !strings.Contains(ics, want) {
+			t.Errorf("feed missing %q:\n%s", want, ics)
+		}
+	}
+	if strings.Count(ics, "BEGIN:VEVENT") != 1 {
+		t.Errorf("only the entry, not the shared meet listing: %d events", strings.Count(ics, "BEGIN:VEVENT"))
+	}
+	for _, l := range strings.Split(ics, "\r\n") {
+		if len(l) > 75 {
+			t.Errorf("unfolded line: %q", l)
+		}
+	}
+	if code, _, _ := b.post("/calendar/feed", url.Values{}); code != http.StatusSeeOther {
+		t.Fatalf("reset: %d", code)
+	}
+	if code, _, _ := anon.get(feedPath); code != http.StatusNotFound {
+		t.Error("the old link must stop working after a reset")
+	}
+	if code, _, _ := anon.get("/calendar/feed/" + strings.Repeat("0", 64) + ".ics"); code != http.StatusNotFound {
+		t.Error("unknown token")
+	}
+	if code, _, loc := anon.get("/calendar/feed"); code != http.StatusSeeOther || !strings.Contains(loc.Get("Location"), "/login") {
+		t.Errorf("feed page needs sign-in: %d", code)
 	}
 }

@@ -51,6 +51,12 @@ From that directory the handler serves:
   `{{template "rules" $d.Rules}}` inside the form; field wrappers need the
   `data-dd-field` attribute the built-in `field` component sets. The runtime is tested
   against the framework's expression conformance cases (`go test` runs it in goja).
+- **Calendar feed**: `/calendar/feed` gives each signed-in person a private iCalendar
+  link (`/calendar/feed/<token>.ics`) to subscribe to from Google Calendar ("From URL"),
+  Apple Calendar or Outlook: everything on their personal calendar from six months back
+  to eighteen ahead, as all-day events (multi-day records span their days). Resetting
+  the link cuts off the old one at once. Themes that override `calendar.html` can link
+  to it with `$d.FeedURL`.
 - **A JSON API** at `/api/v1/<resource>` with a generated OpenAPI 3 document.
 - **File uploads** into a class with an `import` block: built-in readers for FIT
   (Garmin, COROS, Suunto, Wahoo, Polar), GPX, TCX and timing-system CSV produce

@@ -785,6 +785,7 @@ type calendarData struct {
 	ListURL string
 	Legend  []link
 	Mine    bool
+	FeedURL string // the personal calendar's subscribe page
 }
 
 func monthParam(rq *request) time.Time {
@@ -902,7 +903,7 @@ func (a *App) calendar(rq *request) error {
 	}
 	month := monthParam(rq)
 	weeks := calendarGrid(month)
-	d := calendarData{Title: "Your calendar", Month: month.Format("January 2006"), Weeks: weeks, Mine: true}
+	d := calendarData{Title: "Your calendar", Month: month.Format("January 2006"), Weeks: weeks, Mine: true, FeedURL: a.url("/calendar/feed")}
 	var addClass *model.Class
 	for _, c := range a.Model.ConcreteClasses() {
 		if c.Calendar == "" || ownerOf(c) == "" || c.NotPersonal {

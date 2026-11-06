@@ -2,7 +2,7 @@
 <div class="page-head">
   <div><h1>{{$d.Title}}</h1>
   {{if $d.Legend}}<p class="legend">{{range $i, $l := $d.Legend}}<a class="key series-{{$i}}" href="{{$l.URL}}">{{$l.Label}}</a>{{end}}</p>{{end}}</div>
-  <div class="actions">{{if $d.ListURL}}<a class="btn ghost" href="{{$d.ListURL}}">List view</a>{{end}}</div>
+  <div class="actions">{{if $d.FeedURL}}<a class="btn ghost" href="{{$d.FeedURL}}">Add to Google Calendar</a>{{end}}{{if $d.ListURL}}<a class="btn ghost" href="{{$d.ListURL}}">List view</a>{{end}}</div>
 </div>
 <div class="cal-nav"><a href="{{$d.PrevURL}}">←</a><h2>{{$d.Month}}</h2><a href="{{$d.NextURL}}">→</a></div>
 <div class="cal" role="table">
