@@ -573,8 +573,12 @@ func (a *App) relationOptions(ctx context.Context, p *runtime.Principal, c *mode
 	}
 	q, ok := h.Scope(q, p)
 	var opts []option
-	if !rel.Required && !c.Slot(slot).Required {
-		opts = append(opts, option{Value: "", Label: "— none —"})
+	if s := c.Slot(slot); !rel.Required && !s.Required {
+		blank := "— none —"
+		if s.Placeholder != "" {
+			blank = s.Placeholder // e.g. "Standard running" for an optional drill
+		}
+		opts = append(opts, option{Value: "", Label: blank})
 	}
 	if !ok {
 		return opts, nil

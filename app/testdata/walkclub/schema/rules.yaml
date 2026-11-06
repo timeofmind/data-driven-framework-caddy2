@@ -30,7 +30,7 @@ classes:
         options:
           - {when: "mode == 'walk'", values: [footpath, towpath]}
           - {when: "mode == 'cycle'", values: [cycleway, towpath, road]}
-      - {name: kit_id, type: integer, label: "Kit"}
+      - {name: kit_id, type: integer, label: "Kit", placeholder: "No kit"}
     relationships:
       belongs_to:
         - {target: Member, via: member_id, on_delete: cascade}

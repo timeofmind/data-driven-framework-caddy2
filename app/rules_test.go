@@ -27,7 +27,7 @@ func TestRules(t *testing.T) {
 
 	// New form: no mode yet, so every path and kit is offered, with labels and titles.
 	_, form, _ := b.get("/c/trips/new")
-	for _, want := range []string{"Canal towpath", "Cycleway", "Boots (walk)", "Bike (cycle)"} {
+	for _, want := range []string{"Canal towpath", "Cycleway", "Boots (walk)", "Bike (cycle)", `<option value="">No kit</option>`} {
 		if !strings.Contains(form, want) {
 			t.Errorf("new trip form should offer %q", want)
 		}
