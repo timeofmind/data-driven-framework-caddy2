@@ -192,5 +192,5 @@ a.facet:hover { border-color: var(--accent); }
   .seg { margin-left: 0; }
 }
 
-.insert-at { display: inline-flex; gap: .4rem; align-items: center; margin-left: .5rem; font-size: .9rem; }
-.insert-at input[type=number] { width: 4.5rem; display: inline-block; }
+.move-to { display: inline-flex; gap: .4rem; align-items: center; margin-left: .5rem; font-size: .9rem; }
+.move-to input[type=number] { width: 4.5rem; display: inline-block; }

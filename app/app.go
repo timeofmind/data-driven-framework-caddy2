@@ -259,6 +259,8 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 			case len(parts) == 4 && hd.Class.ActionByName(parts[3]) != nil:
 				name := parts[3]
 				a.wrap(rq, func(rq *request) error { return a.action(rq, name) })
+			case len(parts) == 4 && parts[3] == "move":
+				a.wrap(rq, a.move)
 			default:
 				return false
 			}

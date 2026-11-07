@@ -654,16 +654,15 @@ type child struct {
 	AddLbl string
 	More   string
 	Empty  string
-	Insert *insertForm // ordered lists: add at a chosen position
 }
 
-// insertForm adds a child at a position of an ordered list (a sequence slot).
-type insertForm struct {
-	Action, Via, Label string
-	Parent, Max        int64
+// moveForm moves a row of an ordered list to another position.
+type moveForm struct {
+	Action, CSRF, Label string
+	Value, Max          int64
 }
 
-// positionParam is the "_position" a new record asks to be inserted at.
+// positionParam is the "_position" a row is moved to.
 const positionParam = "_position"
 
 func urlQueryEscape(s string) string { return url.QueryEscape(s) }

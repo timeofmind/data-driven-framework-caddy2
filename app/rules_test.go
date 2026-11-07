@@ -204,31 +204,49 @@ func TestLabelWhen(t *testing.T) {
 
 // TestInsertAtPosition: an ordered list (sequence) shows its numbers and can
 // take a new entry at any position, moving the later ones down.
-func TestInsertAtPosition(t *testing.T) {
+func TestMoveToPosition(t *testing.T) {
 	a, srv := newTestApp(t)
 	b := newBrowser(t, srv)
 	b.signup("ann@example.org", "Ann")
 	walk := mustID(b.create("/c/trips/new", url.Values{"name": {"Walk"}, "mode": {"walk"}, "path": {"footpath"}}))
-	stage := func(q, km string) {
-		b.create("/c/stages/new?trip_id="+itoa(walk)+q, url.Values{"trip_id": {itoa(walk)}, "km": {km}, "by": {"time"}, "minutes": {"10"}})
+	for _, km := range []string{"9", "1", "2"} {
+		b.create("/c/stages/new?trip_id="+itoa(walk), url.Values{"trip_id": {itoa(walk)}, "km": {km}, "by": {"time"}, "minutes": {"10"}})
 	}
-	stage("", "1")
-	stage("", "2")
 	_, page, _ := b.get("/c/trips/" + itoa(walk))
-	if !strings.Contains(page, "<th>#</th>") || !strings.Contains(page, `name="_position" min="1" max="3"`) || !strings.Contains(page, "Add stage at position") {
-		t.Fatalf("an ordered list shows # and offers insertion at positions 1–3")
+	if !strings.Contains(page, "<th>#</th>") || strings.Contains(page, "at position") {
+		t.Fatalf("an ordered list shows # and adds at the end only")
 	}
-	_, form, _ := b.get("/c/stages/new?trip_id=" + itoa(walk) + "&_position=1")
-	if !strings.Contains(form, "New stage at position 1") {
-		t.Error("the form says where the new entry goes")
-	}
-	stage("&_position=1", "9")
 	rows, _ := a.Reg.MustClass("Stage").List(t.Context(), runtime.Query{Where: []runtime.Cond{runtime.Eq("trip_id", walk)}, OrderBy: "n asc"})
-	var got []string
-	for _, r := range rows {
-		got = append(got, fmt.Sprintf("%d:%g", r.Int("n"), r.Values["km"]))
+	order := func() string {
+		rows, _ := a.Reg.MustClass("Stage").List(t.Context(), runtime.Query{Where: []runtime.Cond{runtime.Eq("trip_id", walk)}, OrderBy: "n asc"})
+		var got []string
+		for _, r := range rows {
+			got = append(got, fmt.Sprintf("%d:%g", r.Int("n"), r.Values["km"]))
+		}
+		return strings.Join(got, " ")
 	}
-	if strings.Join(got, " ") != "1:9 2:1 3:2" {
-		t.Errorf("insert at 1 moves the others down: %v", got)
+	if got := order(); got != "1:9 2:1 3:2" {
+		t.Errorf("new rows go at the end: %v", got)
+	}
+
+	// Moving: the row's page offers positions 1–3; moving 1 to 3 closes up.
+	first := rows[0].ID()
+	stagePage := "/c/stages/" + itoa(first)
+	_, page, _ = b.get(stagePage)
+	if !strings.Contains(page, "Move to position") || !strings.Contains(page, `name="_position" min="1" max="3" value="1"`) {
+		t.Fatalf("a row of an ordered list offers to move it:\n%s", page)
+	}
+	tok := b.csrf(stagePage)
+	code, _, loc := b.post(stagePage+"/move", url.Values{"_csrf": {tok}, "_position": {"3"}})
+	if code != http.StatusSeeOther || loc != "/c/trips/"+itoa(walk) || order() != "1:1 2:2 3:9" {
+		t.Errorf("move 1 to 3: %d %q %s", code, loc, order())
+	}
+	if code, _, _ := b.post(stagePage+"/move", url.Values{"_csrf": {tok}, "_position": {"4"}}); code != http.StatusBadRequest || order() != "1:1 2:2 3:9" {
+		t.Errorf("out of range: %d %s", code, order())
+	}
+	other := newBrowser(t, srv)
+	other.signup("bob@example.org", "Bob")
+	if code, _, _ := other.post(stagePage+"/move", url.Values{"_csrf": {other.csrf("/c/trips/new")}, "_position": {"1"}}); code == http.StatusSeeOther || order() != "1:1 2:2 3:9" {
+		t.Errorf("only someone who may edit it can move it: %d %s", code, order())
 	}
 }

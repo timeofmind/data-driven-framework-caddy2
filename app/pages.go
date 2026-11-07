@@ -302,6 +302,7 @@ type detailData struct {
 	Private  bool
 	IsMe     bool
 	Actions  []link
+	Move     *moveForm // a row of an ordered list: move it to another position
 }
 
 func (a *App) loadReadable(rq *request) (*runtime.Record, error) {
@@ -346,6 +347,7 @@ func (a *App) detail(rq *request) error {
 	if writable {
 		d.EditURL = a.recordURL(c, rec.ID()) + "/edit"
 		d.DelURL = a.recordURL(c, rec.ID()) + "/delete"
+		d.Move = a.moveForm(rq, rec)
 	}
 	if c.Access != nil && len(c.Access.PublicWhen) > 0 && !runtime.CanRead(rec, nil) {
 		d.Private = true
@@ -445,15 +447,6 @@ func (a *App) childSection(rq *request, parent *runtime.Record, rel *model.Relat
 			ch.AddURL = withSearch(ch.AddURL, rq.search)
 		}
 		ch.AddLbl = firstNonEmpty(rel.AddLabel, "Add "+strings.ToLower(label))
-		// An ordered list (sequence within this parent) can also take a new
-		// child at any position, moving the later ones down.
-		if seq := runtime.SequenceSlot(h.Class, via); seq != nil && total > 0 {
-			taken, err := a.Reg.SequenceTaken(rq.ctx(), h.Class, seq, []int64{parent.ID()}, 0)
-			if err == nil {
-				ch.Insert = &insertForm{Action: a.classURL(h.Class) + "/new", Via: via, Parent: parent.ID(),
-					Max: runtime.SequenceNext(taken[parent.ID()]), Label: "Add " + strings.ToLower(label) + " at position"}
-			}
-		}
 		if !runtime.AddAllowed(rel, parent) {
 			ch.AddURL = ""
 		}
@@ -540,9 +533,6 @@ func (a *App) create(rq *request) error {
 	}
 	label := a.Reg.ClassLabel(rq.ctx(), rec)
 	title := "New " + strings.ToLower(label)
-	if pos := insertPosition(rq, rec); pos > 0 {
-		title += fmt.Sprintf(" at position %d", pos)
-	}
 	a.render(rq, "form", title, formData{
 		Label: label, Title: title, Groups: groups, Action: rq.r.URL.RequestURI(),
 		Cancel: a.classURL(c), Submit: "Save", Message: generalError(errs), Rules: a.formRules(rq.ctx(), rec),
@@ -708,38 +698,82 @@ func (a *App) saveChecked(rq *request, rec *runtime.Record) error {
 		return errs
 	}
 	h := a.Reg.MustClass(c.Name)
-	if pos := insertPosition(rq, rec); pos > 0 {
-		for _, s := range c.AllSlots() {
-			if s.Sequence != "" && rec.Int(s.Sequence) != 0 {
-				if err := h.InsertAt(rq.ctx(), rec, s, pos); err != nil {
-					return friendlyDBError(err)
-				}
-				return nil
-			}
-		}
-	}
 	if err := h.Save(rq.ctx(), rec); err != nil {
 		return friendlyDBError(err)
 	}
 	return nil
 }
 
-// insertPosition is the position a new record of an ordered list was asked
-// to take (?_position=N), or 0 for "at the end".
-func insertPosition(rq *request, rec *runtime.Record) int64 {
-	if rec.Persisted() {
-		return 0
-	}
-	n, err := strconv.ParseInt(rq.r.URL.Query().Get(positionParam), 10, 64)
-	if err != nil || n < 1 {
-		return 0
-	}
+// orderedSlot is the record's sequence slot, if it has a parent to be
+// ordered within.
+func orderedSlot(rec *runtime.Record) *model.Slot {
 	for _, s := range rec.Class.AllSlots() {
-		if s.Sequence != "" {
-			return n
+		if s.Sequence != "" && rec.Int(s.Sequence) != 0 {
+			return s
 		}
 	}
-	return 0
+	return nil
+}
+
+// moveForm offers to move a row of an ordered list (with more than one row)
+// to another position.
+func (a *App) moveForm(rq *request, rec *runtime.Record) *moveForm {
+	s := orderedSlot(rec)
+	if s == nil {
+		return nil
+	}
+	parent := rec.Int(s.Sequence)
+	taken, err := a.Reg.SequenceTaken(rq.ctx(), rec.Class, s, []int64{parent}, 0)
+	if err != nil {
+		return nil
+	}
+	last := runtime.SequenceNext(taken[parent]) - 1
+	if last < 2 {
+		return nil
+	}
+	return &moveForm{Action: a.recordURL(rec.Class, rec.ID()) + "/move", CSRF: rq.csrf,
+		Label: "Move to position", Value: rec.Int(s.Name), Max: last}
+}
+
+// move moves a row of an ordered list to the posted position, then shows
+// the list it is in (its parent).
+func (a *App) move(rq *request) error {
+	if rq.r.Method != http.MethodPost {
+		return errStatus(http.StatusMethodNotAllowed, "Method not allowed")
+	}
+	if err := a.requireLogin(rq); err != nil {
+		return err
+	}
+	rec, err := a.loadReadable(rq)
+	if err != nil {
+		return err
+	}
+	if ok, err := a.Reg.Writable(rq.ctx(), rec, rq.p); err != nil || !ok {
+		return errForbidden
+	}
+	s := orderedSlot(rec)
+	if s == nil {
+		return errNotFound
+	}
+	pos, err := strconv.ParseInt(rq.r.PostFormValue(positionParam), 10, 64)
+	if err != nil {
+		return errStatus(http.StatusBadRequest, "Choose a position.")
+	}
+	if err := rq.handle.MoveTo(rq.ctx(), rec, s, pos); err != nil {
+		var fe runtime.FieldErrors
+		if errors.As(err, &fe) {
+			return errStatus(http.StatusBadRequest, "The position "+fe[s.Name]+".")
+		}
+		return err
+	}
+	back := a.recordURL(rec.Class, rec.ID())
+	if br := rec.Class.BelongsToVia(s.Sequence); br != nil {
+		if pc := a.Model.Class(br.Target); pc != nil {
+			back = a.recordURL(pc, rec.Int(s.Sequence))
+		}
+	}
+	http.Redirect(rq.w, rq.r, back, http.StatusSeeOther)
+	return nil
 }
 
 func (a *App) checkLinks(ctx context.Context, p *runtime.Principal, rec *runtime.Record) runtime.FieldErrors {

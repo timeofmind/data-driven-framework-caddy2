@@ -52,9 +52,10 @@ From that directory the handler serves:
   `data-dd-field` attribute the built-in `field` component sets. The runtime is tested
   against the framework's expression conformance cases (`go test` runs it in goja).
 - **Ordered lists**: children numbered by a `sequence` slot show the number as a column,
-  and their section offers "Add … at position" next to Add; the new record takes that
-  position (`?_position=N` on the new form) and later ones move down. Themes that
-  override `detail.html` add `{{template "insert" .Insert}}` in each section's head.
+  and a new one goes at the end. Each row's own page offers "Move to position" (a POST
+  to `<record>/move`) to anyone who may edit it; the rows in between close up or make
+  room, and the parent's page is shown after. Themes that override `detail.html` add
+  `{{template "move" $d.Move}}` among the record's actions.
 - **Calendar feed**: `/calendar/feed` gives each signed-in person a private iCalendar
   link (`/calendar/feed/<token>.ics`) to subscribe to from Google Calendar ("From URL"),
   Apple Calendar or Outlook: everything on their personal calendar from six months back
