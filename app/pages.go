@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -854,6 +855,8 @@ type calDay struct {
 
 type calItem struct {
 	Text, URL, Class string
+	MoveURL          string // the viewer may drag it to another day (POST date here)
+	Days             int    // how many days it covers
 }
 
 type calendarData struct {
@@ -866,6 +869,22 @@ type calendarData struct {
 	Legend  []link
 	Mine    bool
 	FeedURL string // the personal calendar's subscribe page
+	Script  string // drag-to-reschedule, when anything shown can be moved
+}
+
+// moveScript is the reschedule script's URL when any item on the grid can be
+// moved by the viewer.
+func (a *App) moveScript(weeks [][]calDay) string {
+	for _, w := range weeks {
+		for _, d := range w {
+			for _, it := range d.Items {
+				if it.MoveURL != "" {
+					return a.url("/_dd/" + calendarScriptName)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func monthParam(rq *request) time.Time {
@@ -918,7 +937,12 @@ func (a *App) fillCalendar(rq *request, weeks [][]calDay, h *runtime.Handle, ext
 				ic += " " + s.Name + "-" + r.String(s.Name)
 			}
 		}
-		it := calItem{Text: runtime.CalendarText(r), URL: a.recordURL(c, r.ID()), Class: ic}
+		it := calItem{Text: runtime.CalendarText(r), URL: a.recordURL(c, r.ID()), Class: ic, Days: daysBetween(sp.From, sp.To) + 1}
+		if rq.p != nil && c.CalendarMovable() {
+			if ok, err := a.Reg.Writable(rq.ctx(), r, rq.p); err == nil && ok {
+				it.MoveURL = it.URL + "/reschedule"
+			}
+		}
 		// A record covering several days (a three-day meet) shows on each.
 		for d := sp.From; d <= sp.To; d = nextDay(d) {
 			byDate[d] = append(byDate[d], it)
@@ -930,6 +954,59 @@ func (a *App) fillCalendar(rq *request, weeks [][]calDay, h *runtime.Handle, ext
 		}
 	}
 	return nil
+}
+
+// reschedule moves a calendar entry to the posted day (the calendar's
+// drag and drop) and answers in JSON.
+func (a *App) reschedule(rq *request) error {
+	fail := func(code int, msg string) error {
+		return writeJSON(rq, code, map[string]string{"error": msg})
+	}
+	if rq.r.Method != http.MethodPost {
+		return fail(http.StatusMethodNotAllowed, "Method not allowed")
+	}
+	if rq.p == nil {
+		return fail(http.StatusUnauthorized, "Please sign in again.")
+	}
+	rec, err := a.loadReadable(rq)
+	if err != nil {
+		return fail(http.StatusNotFound, "Not found.")
+	}
+	if ok, err := a.Reg.Writable(rq.ctx(), rec, rq.p); err != nil || !ok || !rec.Class.CalendarMovable() {
+		return fail(http.StatusForbidden, "You can't move this one.")
+	}
+	day := rq.r.PostFormValue("date")
+	if err := rq.handle.MoveOnCalendar(rq.ctx(), rec, day); err != nil {
+		var fe runtime.FieldErrors
+		if errors.As(friendlyDBError(err), &fe) {
+			return fail(http.StatusUnprocessableEntity, fieldErrorText(rec.Class, fe))
+		}
+		return err
+	}
+	return writeJSON(rq, http.StatusOK, map[string]string{"date": day})
+}
+
+// fieldErrorText puts field errors in one sentence ("Date must be …").
+func fieldErrorText(c *model.Class, fe runtime.FieldErrors) string {
+	var parts []string
+	for name, msg := range fe {
+		if s := c.Slot(name); s != nil {
+			msg = s.EffectiveLabel() + " " + msg
+		}
+		parts = append(parts, msg)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, "; ") + "."
+}
+
+// daysBetween counts the days from one YYYY-MM-DD to another.
+func daysBetween(from, to string) int {
+	f, err1 := time.Parse("2006-01-02", from)
+	t, err2 := time.Parse("2006-01-02", to)
+	if err1 != nil || err2 != nil {
+		return 0
+	}
+	return int(t.Sub(f).Hours() / 24)
 }
 
 func (a *App) monthNav(rq *request, base string, month time.Time) (string, string) {
@@ -966,6 +1043,7 @@ func (a *App) classCalendar(rq *request) error {
 	}
 	d := calendarData{Title: plural(c.EffectiveLabel()), Month: month.Format("January 2006"), Weeks: weeks, Mine: mine}
 	d.PrevURL, d.NextURL = a.monthNav(rq, a.classURL(c), month)
+	d.Script = a.moveScript(weeks)
 	lv := cloneValues(rq.r.URL.Query())
 	lv.Del("view")
 	lv.Del("month")
@@ -1006,6 +1084,7 @@ func (a *App) calendar(rq *request) error {
 		}
 	}
 	d.PrevURL, d.NextURL = a.monthNav(rq, a.url("/calendar"), month)
+	d.Script = a.moveScript(weeks)
 	a.render(rq, "calendar", d.Title, d)
 	return nil
 }

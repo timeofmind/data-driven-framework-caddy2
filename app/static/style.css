@@ -177,6 +177,13 @@ a.facet:hover { border-color: var(--accent); }
 .item { display: block; font-size: .8rem; line-height: 1.25; padding: .15rem .35rem; border-radius: 5px; background: var(--accent-soft); color: var(--ink);
   border-left: 3px solid var(--s0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item:hover { text-decoration: none; filter: brightness(.97); }
+.item[draggable=true] { cursor: grab; }
+.item.dragging { opacity: .45; }
+.item.saving { opacity: .6; }
+.day.drop { background: var(--accent-soft); outline: 2px dashed var(--accent); outline-offset: -3px; }
+.cal-status { margin: 0 0 .5rem; padding: .4rem .7rem; border-radius: var(--radius); background: var(--accent-soft); font-size: .9rem; }
+.cal-status.bad { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.cal-hint { font-size: .85rem; margin-top: .5rem; }
 .series-0 { --c: var(--s0); } .series-1 { --c: var(--s1); } .series-2 { --c: var(--s2); }
 .series-3 { --c: var(--s3); } .series-4 { --c: var(--s4); } .series-5 { --c: var(--s5); }
 .item[class*="series-"] { border-left-color: var(--c); }

@@ -121,6 +121,45 @@ func TestCalendarRanges(t *testing.T) {
 	}
 }
 
+// TestReschedule: entries the viewer may edit can be dragged to another day
+// (the script and the item's reschedule URL are on the page); others can't.
+func TestReschedule(t *testing.T) {
+	a, srv := newTestApp(t)
+	ann := newBrowser(t, srv)
+	ann.signup("ann@example.org", "Ann")
+	walk := mustID(ann.create("/c/walks/new", url.Values{"day": {"2027-03-10"}, "title": {"Hill loop"}}))
+	ann.create("/c/meetups/new", url.Values{"title": {"Sunday stroll"}, "day": {"2027-03-14"}})
+	_, cal, _ := ann.get("/calendar?month=2027-03")
+	move := "/c/walks/" + itoa(walk) + "/reschedule"
+	if !strings.Contains(cal, `data-dd-move="`+move+`"`) || !strings.Contains(cal, "/_dd/calendar.") || !strings.Contains(cal, `data-date="2027-03-10"`) {
+		t.Fatalf("a walk can be dragged:\n%s", cal)
+	}
+	if strings.Count(cal, "data-dd-move=") != 1 {
+		t.Error("meetups say calendar_move: false")
+	}
+	_, js, h := ann.get(strings.Split(strings.Split(cal, `<script src="`)[1], `"`)[0])
+	if !strings.Contains(js, "data-dd-move") || !strings.Contains(h.Get("Cache-Control"), "immutable") {
+		t.Error("the script is served, cached for good")
+	}
+	tok := ann.csrf("/c/walks/new")
+	code, body, _ := ann.post(move, url.Values{"_csrf": {tok}, "date": {"2027-03-12"}})
+	got, _ := a.Reg.MustClass("Walk").Load(t.Context(), walk)
+	if code != http.StatusOK || !strings.Contains(body, "2027-03-12") || got.String("day") != "2027-03-12" {
+		t.Errorf("move to the 12th: %d %s %s", code, body, got.String("day"))
+	}
+	if code, body, _ := ann.post(move, url.Values{"_csrf": {tok}, "date": {"soon"}}); code != http.StatusUnprocessableEntity || !strings.Contains(body, "must be a date") {
+		t.Errorf("a bad date: %d %s", code, body)
+	}
+	ben := newBrowser(t, srv)
+	ben.signup("ben@example.org", "Ben")
+	if code, _, _ := ben.post(move, url.Values{"_csrf": {ben.csrf("/c/walks/new")}, "date": {"2027-03-01"}}); code == http.StatusOK {
+		t.Error("only someone who may edit the walk can move it")
+	}
+	if _, cal, _ := ben.get("/calendar?month=2027-03"); strings.Contains(cal, "/_dd/calendar.") {
+		t.Error("nothing to move, no script")
+	}
+}
+
 // TestCalendarFeed: the personal calendar as an iCalendar feed at a private
 // URL — entries span their meet's days, shared listings stay out, a reset
 // link cuts off the old one, and unknown tokens find nothing.

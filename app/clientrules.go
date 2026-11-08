@@ -19,6 +19,16 @@ import (
 //go:embed rules.js
 var rulesRuntime []byte
 
+// The calendar's drag-to-reschedule script, served the same way.
+//
+//go:embed calendar.js
+var calendarScript []byte
+
+var calendarScriptName = func() string {
+	sum := sha256.Sum256(calendarScript)
+	return "calendar." + hex.EncodeToString(sum[:6]) + ".js"
+}()
+
 type clientRules struct {
 	classes map[string]*generator.ClientClass
 	script  []byte
@@ -42,14 +52,20 @@ func buildClientRules(a *App) error {
 }
 
 func (a *App) serveRules(rq *request, name string) {
-	if a.rules.script == nil || name != a.rules.name {
+	script := a.rules.script
+	if name == calendarScriptName {
+		script = calendarScript
+	} else if name != a.rules.name {
+		script = nil
+	}
+	if script == nil {
 		http.NotFound(rq.w, rq.r)
 		return
 	}
 	h := rq.w.Header()
 	h.Set("Content-Type", "text/javascript; charset=utf-8")
 	h.Set("Cache-Control", "public, max-age=31536000, immutable")
-	rq.w.Write(a.rules.script)
+	rq.w.Write(script)
 }
 
 // formRules is what a form needs to load the rules: the script, the class,

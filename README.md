@@ -56,6 +56,15 @@ From that directory the handler serves:
   to `<record>/move`) to anyone who may edit it; the rows in between close up or make
   room, and the parent's page is shown after. Themes that override `detail.html` add
   `{{template "move" $d.Move}}` among the record's actions.
+- **Drag to reschedule**: on calendar pages, entries the viewer may edit whose class can
+  move (`calendar` is the record's own writable date, and the class doesn't say
+  `calendar_move: false`) can be dragged to another day. A small script
+  (`/_dd/calendar.<hash>.js`, cached for good) posts the day to `<record>/reschedule`,
+  which checks permission, moves the record (`calendar_end` by as many days) through the
+  schema's rules and answers in JSON; the entry moves on the page once it is saved.
+  Themes that override `calendar.html` add `data-dd-calendar data-dd-csrf="{{.CSRF}}"` to
+  the grid, `data-date` to each day, the item attributes and the script tag (see the
+  built-in template).
 - **Calendar feed**: `/calendar/feed` gives each signed-in person a private iCalendar
   link (`/calendar/feed/<token>.ics`) to subscribe to from Google Calendar ("From URL"),
   Apple Calendar or Outlook: everything on their personal calendar from six months back

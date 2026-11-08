@@ -261,6 +261,8 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 				a.wrap(rq, func(rq *request) error { return a.action(rq, name) })
 			case len(parts) == 4 && parts[3] == "move":
 				a.wrap(rq, a.move)
+			case len(parts) == 4 && parts[3] == "reschedule":
+				a.wrap(rq, a.reschedule)
 			default:
 				return false
 			}

@@ -6,7 +6,7 @@ require (
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/dop251/goja v0.0.0-20261014135309-2cb8274eed06
 	github.com/muktihari/fit v0.28.5
-	github.com/timeofmind/data-driven-framework-go v0.14.0
+	github.com/timeofmind/data-driven-framework-go v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
