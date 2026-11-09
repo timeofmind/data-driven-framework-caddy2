@@ -410,6 +410,7 @@ func TestAPI(t *testing.T) {
 	var me struct {
 		Authenticated bool   `json:"authenticated"`
 		CSRF          string `json:"csrf_token"`
+		ID            int64  `json:"id"`
 	}
 	json.NewDecoder(resp.Body).Decode(&me)
 	resp.Body.Close()
@@ -441,6 +442,17 @@ func TestAPI(t *testing.T) {
 	}
 	if code, _ := do("DELETE", "/api/v1/walks/"+id, ``, me.CSRF); code != 204 {
 		t.Errorf("delete: %d", code)
+	}
+	// Changing the password takes the current one.
+	acct := "/api/v1/members/" + itoa(me.ID)
+	if code, out := do("PATCH", acct, `{"pw":"another long pw"}`, me.CSRF); code != 422 || out["fields"] == nil {
+		t.Errorf("password change without the current one: %d %v", code, out)
+	}
+	if code, out := do("PATCH", acct, `{"pw":"another long pw","current_password":"long enough pw"}`, me.CSRF); code != 200 {
+		t.Errorf("password change: %d %v", code, out)
+	}
+	if code, _ := do("PATCH", acct, `{"name":"Api 2"}`, me.CSRF); code != 200 {
+		t.Errorf("other changes need no password: %d", code)
 	}
 	resp, _ = http.Get(srv.URL + "/api/v1/openapi.json")
 	var spec map[string]any

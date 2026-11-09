@@ -110,6 +110,10 @@ ascent_m, avg_hr, max_hr`. Readers are pluggable (`importer.Register`).
 
 - Passwords: bcrypt. Sessions: random 256-bit tokens in HttpOnly, SameSite=Lax
   cookies; only their SHA-256 is stored.
+- Changing an account's password takes the current one: on the profile form, and as
+  `current_password` in an API `PATCH` (admins excepted).
+- Admins (`admins` logins) bypass access rules and may set `write: admin` fields; an
+  empty `admins` (e.g. an unset environment variable) grants nothing.
 - CSRF: double-submit token on every form; API writes need `X-CSRF-Token`
   (from `GET /api/v1/me`).
 - Rate limits per client IP on sign-up, sign-in and uploads.

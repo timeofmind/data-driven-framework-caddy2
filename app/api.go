@@ -96,6 +96,10 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 				return errForbidden
 			}
 			if err := h.Delete(rq.ctx(), rec.ID()); err != nil {
+				var keep *runtime.KeepError
+				if errors.As(err, &keep) {
+					return errStatus(http.StatusConflict, keep.Msg)
+				}
 				return errStatus(http.StatusConflict, "cannot delete: other records depend on it")
 			}
 			rq.w.WriteHeader(http.StatusNoContent)
@@ -229,13 +233,21 @@ func (a *App) apiSave(rq *request, rec *runtime.Record, status int) error {
 		if v, ok := in[c.Auth.Login].(string); ok {
 			in[c.Auth.Login] = strings.ToLower(strings.TrimSpace(v))
 		}
-	}
-	for k := range in {
-		if s := c.Slot(k); s == nil || !s.Writable() || k == ownerOf(c) {
-			delete(in, k) // read-only, unknown and owner fields are ignored, as in forms
+		// Changing an account's password takes the current one (admins excepted).
+		if pw, _ := in[c.Auth.Password].(string); pw != "" && rec.Persisted() && !rq.p.Admin {
+			cur, _ := in["current_password"].(string)
+			if !runtime.CheckPassword(rec, c.Auth.Password, cur) {
+				return &httpError{status: http.StatusUnprocessableEntity, msg: "validation failed",
+					fields: runtime.FieldErrors{"current_password": "doesn't match your current password"}}
+			}
 		}
 	}
-	if errs := rec.Assign(in, ownerOf(c)); errs != nil {
+	for k := range in {
+		if s := c.Slot(k); s == nil || !s.WritableBy(rq.p.Admin) || k == ownerOf(c) {
+			delete(in, k) // read-only, admin-only (for others), unknown and owner fields are ignored, as in forms
+		}
+	}
+	if errs := rec.AssignFor(rq.p, in, ownerOf(c)); errs != nil {
 		return &httpError{status: http.StatusUnprocessableEntity, msg: "validation failed", fields: errs}
 	}
 	if err := a.engine.Save(rq.ctx(), rq.p, rec); err != nil {

@@ -120,6 +120,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("datadriven: database: %w", err)
 	}
+	reg.Location = loc // "today" in the model's rules
 	res, err := reg.EnsureSchema(ctx)
 	if err != nil {
 		reg.Close()
@@ -137,7 +138,9 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	a := &App{cfg: cfg, man: man, Model: m, Reg: reg, Pages: pages, bySlug: map[string]*runtime.Handle{},
 		limiter: newLimiter(), log: cfg.Logger, admins: map[string]bool{}, loc: loc}
 	for _, ad := range cfg.Admins {
-		a.admins[strings.ToLower(strings.TrimSpace(ad))] = true
+		if ad = strings.ToLower(strings.TrimSpace(ad)); ad != "" {
+			a.admins[ad] = true
+		}
 	}
 	for _, n := range reg.ClassNames() {
 		h := reg.MustClass(n)
