@@ -59,6 +59,12 @@ func (a *App) signup(rq *request) error {
 			}
 		}
 	}
+	if rq.r.Method != http.MethodPost {
+		// A link may fill in the login (an invitation: /signup?email=…).
+		if v := strings.TrimSpace(rq.r.URL.Query().Get(au.Login)); v != "" && len(v) <= 254 {
+			rec.Values[au.Login] = strings.ToLower(v)
+		}
+	}
 	var fields []ux.FormField
 	for _, n := range []string{au.Login, au.Password, "password_confirm", au.Display} {
 		if n == "" {

@@ -115,9 +115,11 @@ ascent_m, avg_hr, max_hr`. Readers are pluggable (`importer.Register`).
 - Admins (`admins` logins, and accounts whose model `auth: {admin: <slot>}` flag is set)
   bypass access rules and may set `write: admin` fields; an empty `admins` (e.g. an unset
   environment variable) grants nothing, and only an admin can set the flag.
-- A record's party (`access: party`, e.g. the coach an athlete asked) may set only its
-  `write: party` fields through the API; others' values for those fields are ignored, as
-  in forms. Rows shared with a team (`access: shared`) are listed and returned to the
+- A record's party (`access: party` / `party_via`, e.g. a team's officers for a
+  membership) may set only its `write: party` fields through the API, and create a row
+  for someone else only where the model allows (`party_creates`); others' values for
+  those fields are ignored, as in forms. Deletes follow `Registry.Deletable`.
+- `/signup?<login>=…` fills in the login (an invitation's signup link). Rows shared with a team (`access: shared`) are listed and returned to the
   owner's groupmates only; values hidden by `private_when` are left out of responses.
 - CSRF: double-submit token on every form; API writes need `X-CSRF-Token`
   (from `GET /api/v1/me`).

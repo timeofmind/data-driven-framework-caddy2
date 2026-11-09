@@ -92,7 +92,7 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 			}
 			return a.apiSave(rq, rec, http.StatusOK)
 		case http.MethodDelete:
-			if ok, _ := a.Reg.Writable(rq.ctx(), rec, rq.p); !ok {
+			if ok, _ := a.Reg.Deletable(rq.ctx(), rec, rq.p); !ok {
 				return errForbidden
 			}
 			if err := h.Delete(rq.ctx(), rec.ID()); err != nil {
@@ -242,16 +242,23 @@ func (a *App) apiSave(rq *request, rec *runtime.Record, status int) error {
 			}
 		}
 	}
-	role := runtime.WriterRole(rec, rq.p)
-	for k := range in {
-		if s := c.Slot(k); s == nil || !s.WritableAs(role) || k == ownerOf(c) {
-			delete(in, k) // read-only, admin- or party-only (for others), unknown and owner fields are ignored, as in forms
+	role := a.Reg.WriterRole(rq.ctx(), rec, rq.p)
+	// A party creating the record names its owner (access: party_creates);
+	// AssignFor then takes only the owner, the party and write: party fields.
+	if !a.Reg.PartyCreating(rq.ctx(), rec, rq.p, in) {
+		for k := range in {
+			if s := c.Slot(k); s == nil || !runtime.SlotSettable(rec, s, role) || k == ownerOf(c) {
+				delete(in, k) // read-only, admin- or party-only (for others), unknown and owner fields are ignored, as in forms
+			}
 		}
 	}
-	if errs := rec.AssignFor(rq.p, in, ownerOf(c)); errs != nil {
+	if errs := a.Reg.AssignFor(rq.ctx(), rec, rq.p, in, ownerOf(c)); errs != nil {
 		return &httpError{status: http.StatusUnprocessableEntity, msg: "validation failed", fields: errs}
 	}
 	if err := a.engine.Save(rq.ctx(), rq.p, rec); err != nil {
+		if errors.Is(err, ux.ErrForbidden) {
+			return errForbidden
+		}
 		var fe runtime.FieldErrors
 		if errors.As(err, &fe) {
 			return &httpError{status: http.StatusUnprocessableEntity, msg: ux.GeneralError(fe), fields: fe}
