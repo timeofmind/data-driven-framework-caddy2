@@ -500,6 +500,57 @@ a use, and where it is logged), `display`/`title`, `label`/`label_when`/`descrip
 and enum `labels`. `computed` keeps `format`/`suffix` as the default way to show the
 value; an interface view can override it.
 
+## Changes to the framework's code
+
+Removing the keys is not enough: presentation has also reached the framework's Go
+code. Today the framework knows what a calendar is, what an HTML input is, which
+button to show and how a list is filtered on screen. After the change it offers only
+**data operations** — queries and writes that mean something to any client: a page,
+the JSON API, an import, a script — and the handler builds every interface view from
+them.
+
+### What moves, and what replaces it
+
+| in the framework today | why it is presentation | data operation that replaces it (framework) | presentation part goes to (handler) |
+|---|---|---|---|
+| `generator/ui.go`, `ddframework generate-ui` (`UIConfig`, `ClassUI`, `UIHTMLBody`, `SlotUIField`; the Perl framework's `<class>_ui.json`) | generates list and form HTML and their configuration from a class | — (removed) | `ddcaddy generate-pages`, which writes page files |
+| `Slot.Placeholder`, `ControlType`, `UIOrder`, `UIGroup`, `Hidden`; `EffectiveControlType`, `HTMLInputType` | how a field is drawn and where | — | interface view `fields` (`placeholder`, `as`, order, `group`); the handler picks the HTML input for each value type |
+| `Class.VisibleSlots`, `FormSlots` (sorted by `ui_order`) | which fields a page shows, in what order | `Class.AllSlots` (declaration order), `Slot.Writable` | interface view `fields` |
+| `Class.OrderBy`, `Relationship.OrderBy` | a list's default order | `Query.OrderBy`, as now | `data.order` |
+| `Class.NoSearch` | whether a list has a search box | `Cond` with `like`, as now | `list.search` |
+| `Class.Calendar`, `CalendarEnd`, `NotPersonal`, `CalendarFixed`; `CalendarMovable`, `CalendarIsPath` | which classes are drawn on which calendar, and whether they can be dragged | `Class.Occurs` (model `occurs`); `Occurs.IsOwn()` (dates are the record's own slots, so they can be written) | `calendar.show`, `show[].drag` |
+| `Handle.CalendarSpans(q, from, to)` | rows for a calendar grid | **`Handle.Occurring(ctx, q, from, to)`**: the records whose `occurs` dates overlap the range, each with its first and last day — for calendars, the iCalendar feed, reminders, reports | the grid: weeks, days, multi-day spans, legend |
+| `Handle.MoveOnCalendar(rec, day)` | "dropped on a day" | **`Handle.Shift(ctx, rec, days)`**: move a record's `occurs` dates by a number of days (an end with its start; times of day kept), saved through every rule | the drag, and working out the days from the day dropped on |
+| `CalendarText`, `Class.CalendarLabel` | an entry's text on a calendar | **`Registry.Eval(ctx, rec, expr)`**: evaluate an expression against a record and its links (also serves `where`, `text`, `title` in page files) | `show[].text` |
+| `AddAllowed`, `Relationship.AddWhen`, `AddLabel` | whether to show an "Add" button, and its text | **`create_when`**, checked by `Save`; **`Registry.CreateAllowed(ctx, rec)`**: would this new record be accepted? (asked with a record prefilled with its parent) | `list.add` with its label; the button only when `CreateAllowed` |
+| `Relationship.Rank` | leaderboard numbering, best row per athlete | `Query` with `OrderBy`; **`Query.BestPer(slot)`**: the first row per value of a slot, in the query's order | `list.rank`: the numbering |
+| `Class.Filters`, `Model.FilterValueClass`, `Handle.FilterConds(filter, ids)` | the facets of a list's filter panel | **`Handle.LinkedTo(ctx, via, ids, all/any, descendants)`**: conditions for records linked (through a has_many and its join class) to all or any of these records, optionally counting a record's descendants by a self-referencing slot | `list.filters` / `picker.filters`: the panel, grouping, collapsing |
+| `Usage.Filter`; `Handle.RankByUsage(q, ids)` reading the filter | ranking reads the list's filter definition | `Handle.RankByUsage(q, values)` reading only the model's `usage` (`values` is the log's has_many) | `rank_by_usage` on a filter |
+| `Action.Label` | button text | `Registry.Copy` (and other actions) by name, as now | `detail.actions[].label` |
+| — | page `where` expressions have to become queries | **`Registry.Conds(ctx, expr, env)`**: turn an expression over a class's slots and paths (comparisons joined by `and`/`or`) into query conditions; the validator rejects expressions that can't be | `data.where`, `show[].where` |
+
+### What stays, because it is about the data
+
+- Types, value coercion and the canonical text of a value (`FormatValue`,
+  `FormatDuration`, `DisplayValue`, `EnumLabel`): the same in a page, a CSV export or
+  an API error message.
+- `Record.Title`, `DisplaySlot`, `ClassLabel`, `SlotLabel` (`label_when`): what a
+  record and its fields are called.
+- `Save`, validation, `checks`, `when`/`required_when`/`options`, `default_expr`,
+  `AllowedValues`, `MatchConds`, access (`Scope`, `Readable`, `Writable`, `CanCreate`).
+- `MoveTo` and `InsertAt` for sequences; `Copy`; `Import`; triggers and `on_change`;
+  `LogUsage`; `Descendants`.
+- `ClientRules`: the model's rules exported for any client to apply as data is entered
+  (the handler's browser script is one such client).
+- The SQL, migration, JSON Schema, OpenAPI and model-documentation generators.
+
+### A test for new framework features
+
+A feature belongs in the framework only if it means something to a client that never
+draws a page — the JSON API, an import, a script. "Records occurring in a date range"
+passes; "records for a calendar" doesn't. Anything that fails the test goes to the
+handler's catalogue of interface views.
+
 ## Validation
 
 `make check` (and the handler at start-up) loads the model and every page, and fails
@@ -678,18 +729,24 @@ model would refuse the record.
 
 ## Moving over
 
-1. **Framework**: add `occurs`, `create_when` and slot read rules; reject unknown
-   keys. The old interface keys keep working until step 4.
-2. **Handler**: load `pages/*.yaml`; implement the interface view types;
-   `generate-pages` and `pages-report`. For the switch-over only, an app setting
-   (`generated_pages: true` in app.yaml) keeps today's generated pages for classes no
-   page file covers yet. Tests against the walkclub fixture, declared pages only.
+1. **Framework**: add `occurs`, `create_when` and slot read rules; add the data
+   operations above (`Occurring`, `Shift`, `Eval`, `CreateAllowed`, `BestPer`,
+   `LinkedTo`, `Conds`); reject unknown keys. The old keys and functions keep working
+   until step 4.
+2. **Handler**: load `pages/*.yaml`; implement the interface view types on the new data
+   operations only; `generate-pages` and `pages-report`. For the switch-over only, an
+   app setting (`generated_pages: true` in app.yaml) keeps today's generated pages for
+   classes no page file covers yet. Tests against the walkclub fixture, declared pages
+   only.
 3. **athleticstogether**: rename `schema/` to `model/`, add `occurs` and `create_when`;
    write the calendar page first, then the workout, library, scheduling and event
    pages, then the rest, checking each live; then turn `generated_pages` off.
-4. **Framework and handler**: drop the interface keys from the model (a major
-   version) and remove page generation at run time from the handler. From then on the
-   model describes data only, and every page is a page file.
+4. **Framework and handler**: a breaking release of each. The framework drops the
+   interface keys from the model and the functions in the table above
+   (`CalendarSpans`, `MoveOnCalendar`, `CalendarText`, `AddAllowed`, `FilterConds`,
+   `VisibleSlots`, `FormSlots`, `HTMLInputType`, `generate-ui`, …); the handler drops
+   page generation at run time. From then on the model describes data only, the
+   framework's code offers data operations only, and every page is a page file.
 
 ## Open questions
 
