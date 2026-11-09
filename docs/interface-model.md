@@ -1,4 +1,4 @@
-# The interface model: pages and components
+# The interface model: pages and interface views
 
 Status: **proposed** — nothing here is implemented yet. For review before any code
 changes.
@@ -34,13 +34,13 @@ This document splits the two:
 my-app/
   app.yaml          name, sign-up, menu, where the rest is
   model/*.yaml      the data model (today's schema/, minus the interface keys)
-  pages/*.yaml      one file per page: its URL, who may see it, its components
-  theme/            HTML: the page layout and one template per component type
+  pages/*.yaml      one file per page: its URL, who may see it, its interface views
+  theme/            HTML: the page layout and one template per interface view type
 ```
 
 - The **framework** reads the model only. It knows nothing about pages.
 - The **handler** (this repository) reads the pages and draws them. It stays
-  app-agnostic: page files name component types it provides, never app code.
+  app-agnostic: page files name interface view types it provides, never app code.
 - **Layout and look** stay in the theme's HTML templates. Page files say *what* is on
   a page and how it reads and writes data, not where it sits on the screen.
 
@@ -61,7 +61,7 @@ whether entries there can be dragged, is page.
 Page files are trees of named settings, not documents with mixed text and markup, so
 the format is the model's: YAML, read by one loader and checked by one validator.
 XML's advantages — mixed content, namespaces, XSD — would matter if page files held
-the layout itself (components placed inside HTML); here the layout is the theme's
+the layout itself (interface views placed inside HTML); here the layout is the theme's
 HTML. To keep YAML's weak spots (indentation, `no` read as `false`) from failing
 silently, the page loader rejects unknown keys and wrong types, with file and line.
 (The model parser should do the same; today it ignores keys it doesn't know.)
@@ -95,16 +95,16 @@ params:                          # optional: query parameters the page reads
   month: {type: month}
   tag: {type: integer, many: true}
 template: workout.html           # optional: a theme template that places the
-                                 # components itself; default: page.html, which
+                                 # interface views itself; default: page.html, which
                                  # renders them in order
-components:
+interface_views:
   - …
 ```
 
 - **`path`** keeps today's URLs (`/c/<resource>/…`, `/calendar`) so links and
   bookmarks keep working. Two pages may not claim the same path.
 - **`record`**: the page loads that record, answers 404 if the viewer may not read it
-  (as today), and components can refer to it as `record`.
+  (as today), and interface views can refer to it as `record`.
 - **`access`** only narrows. The model's access rules always apply as well: a page
   marked `public` still shows nobody a private record.
 - **Pages not declared** are generated from the model as today (list, record, new,
@@ -173,7 +173,7 @@ message (`must be on or after the start`) in place.
 
 ### Presentations
 
-| component | needs from the model | shows | offers |
+| interface view | needs from the model | shows | offers |
 |---|---|---|---|
 | `list` | any class | rows as a table, with search, sorting, filters, paging | create, delete; **reorder** if it orders by a `sequence`; `rank` numbering |
 | `detail` | one record | its fields, grouped; its children as lists | edit, delete, actions |
@@ -198,17 +198,24 @@ New presentations and manipulations are added to the catalogue in this repositor
 generic, with their model needs, their write and their form equivalent — never in an
 app.
 
-## Components
+## Interface views
 
-A page is a list of components, each an entry from the catalogue. Each one reads data from the model, shows it in some
-form, and may write data back. Every component has:
+A page is a list of **interface views**, each an entry from the catalogue. An interface
+view reads data from the model, shows it in some form, and may write data back.
+
+The name is deliberately specific. A **DataView** — planned as a deeper layer of the
+framework, defined in the model — is a different thing: a data set derived from the
+model's classes. Interface views belong to pages and are about presentation and
+manipulation; they may later read from data views, but never define them.
+
+Every interface view has:
 
 | key | |
 |---|---|
 | `type` | `list`, `calendar`, `detail`, `form`, `chips`, `picker`, `upload`, `text` |
-| `name` | unique on the page; needed when another component or a template refers to it |
+| `name` | unique on the page; needed when another interface view or a template refers to it |
 | `title`, `intro` | heading and a line of text above it |
-| `when` | expression: the component is shown only when it holds |
+| `when` | expression: the interface view is shown only when it holds |
 
 ### Reading data
 
@@ -238,7 +245,7 @@ fields:
   - {group: "Targets", fields: [target_distance_km, target_duration]}
 ```
 
-Labels and descriptions come from the model (what the field *means*); a component may
+Labels and descriptions come from the model (what the field *means*); an interface view may
 override the wording (`label:`) without touching the model. `placeholder`, `help`
 and `as` (the control or display: `select`, `radio`, `textarea`, `badge`, …) are
 page settings.
@@ -246,10 +253,10 @@ page settings.
 ### Writing data
 
 Every write goes through the model: access rules, checks, sequences, `on_change`,
-triggers and usage logging all run exactly as they do for the API. A component can
+triggers and usage logging all run exactly as they do for the API. An interface view can
 make writes *possible*; it can never make one *allowed* that the model refuses.
 
-What a component may write is declared, and the server enforces the declaration:
+What an interface view may write is declared, and the server enforces the declaration:
 
 - a **form** writes only the fields it lists, plus its `set:` values (today a form
   accepts every writable slot of the class);
@@ -258,8 +265,8 @@ What a component may write is declared, and the server enforces the declaration:
 - **chips** create and delete only rows of their join class;
 - **actions** run model actions (`copy`) or delete.
 
-Writes are POSTed to the page's own URL with `_component=<name>` (and `_record=<id>`
-for a row), plus the CSRF token. The handler looks up that component's declaration on
+Writes are POSTed to the page's own URL with `_view=<name>` (and `_record=<id>`
+for a row), plus the CSRF token. The handler looks up that interface view's declaration on
 that page and applies only what it allows. Scripts (drag, reorder) post the same way
 and get JSON back. Same-origin scripts only, as now (`script-src 'self'`).
 
@@ -417,10 +424,10 @@ Keys that leave the model, and where they go:
 
 | model key today | becomes |
 |---|---|
-| slot `ui_order`, `ui_group`, `placeholder`, `control_type` | component `fields` (order, `group`, `placeholder`, `as`) |
-| slot `hidden` | not listed in any component's `fields`; where it means *private* (`email`), a model read rule on the slot (`read: owner`) — new |
-| class `order_by`, has_many `order_by` | component `data.order` |
-| class `search: false` | component `search` (none unless listed) |
+| slot `ui_order`, `ui_group`, `placeholder`, `control_type` | interface view `fields` (order, `group`, `placeholder`, `as`) |
+| slot `hidden` | not listed in any interface view's `fields`; where it means *private* (`email`), a model read rule on the slot (`read: owner`) — new |
+| class `order_by`, has_many `order_by` | interface view `data.order` |
+| class `search: false` | interface view `search` (none unless listed) |
 | class `filters` | list / picker `filters` |
 | has_many `add_label` | list `add.label` |
 | has_many `add_when` | a model rule on the child, checked on save (new: `create_when`) — e.g. EventRegistration: `event.registration_open`; WorkoutSet: the workout's sport has sets |
@@ -458,7 +465,7 @@ What stays in the model, because it holds whatever writes the data: types, `requ
 `triggers`, `on_change`, `import`, `actions` (what a copy does), `usage` (what counts as
 a use, and where it is logged), `display`/`title`, `label`/`label_when`/`description`,
 and enum `labels`. `computed` keeps `format`/`suffix` as the default way to show the
-value; a component can override it.
+value; an interface view can override it.
 
 ## Validation
 
@@ -475,10 +482,10 @@ with file and line when:
 
 ## Theme
 
-`page.html` renders a page's components in order. Each component type has its own
-template (`components/list.html`, `components/calendar.html`, …), built in and
+`page.html` renders a page's interface views in order. Each interface view type has its own
+template (`interface-views/list.html`, `interface-views/calendar.html`, …), built in and
 overridable by the theme. A page that needs its own arrangement names a template that
-places components by name: `{{component "month"}}`, `{{component "library"}}`.
+places interface views by name: `{{interfaceView "month"}}`, `{{interfaceView "library"}}`.
 
 ## Worked examples (athleticstogether.com)
 
@@ -490,7 +497,7 @@ path: /calendar
 title: "'Your calendar'"
 access: signed_in
 params: {month: {type: month}}
-components:
+interface_views:
   - type: calendar
     name: month
     month: params.month
@@ -525,7 +532,7 @@ path: /c/workouts/{id}
 title: "record.name"
 access: public
 record: {class: Workout, id: id}
-components:
+interface_views:
   - type: detail
     data: {record: record}
     fields: [name, sport, sub_activity_id, surface, description, cloned_from_id, visibility]
@@ -570,7 +577,7 @@ access: signed_in
 params:
   date: {type: date}
   workout_id: {type: integer}
-components:
+interface_views:
   - type: picker
     name: library
     title: "Find a workout"
@@ -613,7 +620,7 @@ path: /c/events/{id}
 title: "record.name"
 access: public
 record: {class: Event, id: id}
-components:
+interface_views:
   - type: detail
     data: {record: record}
     fields: [name, sport, distance_km, start_date, end_date, description, registration_open]
@@ -638,7 +645,7 @@ model would refuse the record.
 
 1. **Framework**: add `occurs`, `create_when` and slot read rules; reject unknown
    keys. Old keys keep working (and keep driving the generated pages) until step 4.
-2. **Handler**: load `pages/*.yaml`; implement the component types; route declared
+2. **Handler**: load `pages/*.yaml`; implement the interface view types; route declared
    pages, generate the rest; `generate-pages`. Tests against the walkclub fixture with
    a mix of declared and generated pages.
 3. **athleticstogether**: rename `schema/` to `model/`, add `occurs` and `create_when`;
@@ -649,8 +656,6 @@ model would refuse the record.
 
 ## Open questions
 
-- **"Component"** as the name for a part of a page that shows and/or edits data.
-  Alternatives: *view*, *widget*, *panel*.
 - **Forms write only listed fields.** This is stricter than today and closes a gap (a
   hand-made POST can't set a writable field the form never showed), but every form must
   list its fields. The generated default form lists all writable fields, as now.
