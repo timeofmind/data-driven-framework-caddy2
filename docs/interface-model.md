@@ -91,6 +91,7 @@ path: /c/workouts/{id}           # URL; {id} and other {params} are path paramet
 title: "record.title"            # expression; the page's heading and <title>
 access: public                   # public | signed_in | an expression (see below)
 record: {class: Workout, id: id} # optional: the record the page is about
+default_for: Workout             # optional: links to a Workout come here
 params:                          # optional: query parameters the page reads
   month: {type: month}
   tag: {type: integer, many: true}
@@ -107,10 +108,36 @@ interface_views:
   (as today), and interface views can refer to it as `record`.
 - **`access`** only narrows. The model's access rules always apply as well: a page
   marked `public` still shows nobody a private record.
-- **Pages not declared** are generated from the model as today (list, record, new,
-  edit, delete for each class), so an app works with no page files and can move to
-  them one page at a time. `ddcaddy generate-pages` writes the generated pages out as
-  files to start from.
+- **`default_for`** (optional, with `record`): this is the page that links to a
+  record of that class go to when an interface view doesn't name a page — table cells
+  showing a linked record, calendar entries, `then: saved`. At most one page per class.
+- **Only declared pages exist.** A class no page names has no pages; it is still in
+  the model, and in the JSON API, which works at the level of data, not pages.
+
+### From pages to data, never back
+
+Nothing in the model mentions pages, and nothing in the model says which of its classes
+or fields appear in the interface. Many classes never do: `WorkoutSelection` (the
+library's usage log) and `WorkoutSelectionTag` are written by the server and read only
+to rank search results; join classes such as `WorkoutTag` appear only through the
+records they join.
+
+The association is written once, in one direction: **a page file names the classes and
+fields it reads and writes.** The model doesn't know which pages use it, and doesn't
+need to. When that question comes up — which pages show `PlannedWorkout`, which can
+change `PlannedWorkout.date`, which classes no page touches — it is answered from the
+page files: `ddcaddy pages-report` loads them with the model and prints, per class and
+field, the pages and interface views that read or write it, and the classes and fields
+no page uses. It is computed when asked, never stored.
+
+### Starting pages: `generate-pages`
+
+`ddcaddy generate-pages <Class>…` writes starting page files for the classes you name
+— a list, a record page with its children, new and edit forms — choosing interface
+views by the catalogue's model needs (a class that `occurs` gets a calendar beside its
+list, a sequenced child list gets reorder, a many-to-many gets chips). It runs once, by
+hand; from then on the files are ordinary page files, edited like any other. Nothing
+is generated while the app runs.
 
 ### Expressions
 
@@ -189,10 +216,8 @@ message (`must be on or after the start`) in place.
 | *later:* `chart` | numbers, and `occurs` or an order | values over time or by category | — |
 | *later:* `map` | coordinates | records as places | — |
 
-Because each entry's needs are model features, the handler can also choose sensibly
-when a page isn't declared: a class that occurs on dates gets a calendar beside its
-list, a sequenced child list gets reorder, a many-to-many gets chips. Declared pages
-choose for themselves.
+Because each entry's needs are model features, `generate-pages` can propose sensible
+interface views for a class (above); the page files then decide.
 
 New presentations and manipulations are added to the catalogue in this repository —
 generic, with their model needs, their write and their form equivalent — never in an
@@ -279,7 +304,8 @@ A table of rows.
   name: workouts
   data: {class: Workout, order: "name asc"}
   fields: [name, sport, sub_activity_id, surface, author_id]
-  link: {page: workout, id: row.id}       # default: the class's record page
+  link: {page: workout, id: row.id}       # default: the class's default_for page, if any;
+                                          # otherwise rows are not links
   search: [name]                          # free-text search over these fields; omit for none
   sort: ["name asc", "created_at desc"]   # orders the viewer may switch between
   filters:
@@ -336,8 +362,8 @@ The fields of one record, and what can be done with it.
   data: {record: record}
   fields: [name, sport, sub_activity_id, surface, description, cloned_from_id, visibility]
   actions:
-    - edit                                # → the record's edit page
-    - delete
+    - {edit: {page: edit-workout}}        # a page with a form that edits the record
+    - {delete: {then: {page: workouts}}}  # confirms on this page, then goes there
     - {action: copy, label: "Copy to my workouts"}   # a model action
     - move_to_position                    # for rows of an ordered list
 ```
@@ -420,6 +446,11 @@ A paragraph or list of text: introductions, help.
 
 ## Changes to the model
 
+After the change, nothing in the model describes a page: no page names, URLs,
+headings, button text, field order or layout. Labels and descriptions stay only where
+they name the data itself — "Distance (km)", "Scheduled Workout" — which the API
+documentation and error messages ("Distance (km) must be at least 0") use too.
+
 Keys that leave the model, and where they go:
 
 | model key today | becomes |
@@ -430,6 +461,8 @@ Keys that leave the model, and where they go:
 | class `search: false` | interface view `search` (none unless listed) |
 | class `filters` | list / picker `filters` |
 | has_many `add_label` | list `add.label` |
+| has_many `label` where it is a page heading ("Leaderboard", "Your entry") | interface view `title`; the relationship keeps a plain name of the data ("Results") |
+| action `label` ("Copy to my workouts") | `detail` `actions[].label`; the model action keeps its name (`copy`) |
 | has_many `add_when` | a model rule on the child, checked on save (new: `create_when`) — e.g. EventRegistration: `event.registration_open`; WorkoutSet: the workout's sport has sets |
 | has_many `rank` | list `rank` |
 | class `calendar`, `calendar_end` | model `occurs` (below) + calendar `show` |
@@ -462,7 +495,7 @@ What stays in the model, because it holds whatever writes the data: types, `requ
 `min`/`max`/`pattern`, defaults and `default_expr`, `when`/`required_when`/`options`
 (a field that does not apply is cleared on save), `sequence`, relationships with
 `on_delete`, `link` and `match`, constraints, `access`, `auth`, `checks`, `computed`,
-`triggers`, `on_change`, `import`, `actions` (what a copy does), `usage` (what counts as
+`triggers`, `on_change`, `import`, `actions` (what a copy does, not its button), `usage` (what counts as
 a use, and where it is logged), `display`/`title`, `label`/`label_when`/`description`,
 and enum `labels`. `computed` keeps `format`/`suffix` as the default way to show the
 value; an interface view can override it.
@@ -478,7 +511,7 @@ with file and line when:
 - a link names a page that does not exist or leaves out a parameter it needs;
 - a `reorder` field is not a `sequence`, a `drag` class has no `occurs`, a form lists
   a field the model makes read-only, or an `upload` class has no `import`;
-- two pages claim the same path.
+- two pages claim the same path, or are both `default_for` the same class.
 
 ## Theme
 
@@ -532,6 +565,7 @@ path: /c/workouts/{id}
 title: "record.name"
 access: public
 record: {class: Workout, id: id}
+default_for: Workout
 interface_views:
   - type: detail
     data: {record: record}
@@ -620,6 +654,7 @@ path: /c/events/{id}
 title: "record.name"
 access: public
 record: {class: Event, id: id}
+default_for: Event
 interface_views:
   - type: detail
     data: {record: record}
@@ -644,20 +679,20 @@ model would refuse the record.
 ## Moving over
 
 1. **Framework**: add `occurs`, `create_when` and slot read rules; reject unknown
-   keys. Old keys keep working (and keep driving the generated pages) until step 4.
-2. **Handler**: load `pages/*.yaml`; implement the interface view types; route declared
-   pages, generate the rest; `generate-pages`. Tests against the walkclub fixture with
-   a mix of declared and generated pages.
+   keys. The old interface keys keep working until step 4.
+2. **Handler**: load `pages/*.yaml`; implement the interface view types;
+   `generate-pages` and `pages-report`. For the switch-over only, an app setting
+   (`generated_pages: true` in app.yaml) keeps today's generated pages for classes no
+   page file covers yet. Tests against the walkclub fixture, declared pages only.
 3. **athleticstogether**: rename `schema/` to `model/`, add `occurs` and `create_when`;
    write the calendar page first, then the workout, library, scheduling and event
-   pages, then the rest, checking each live.
-4. **Framework**: once no page relies on them, drop the interface keys from the model
-   (a major version), and the generated pages read field order from declaration order.
+   pages, then the rest, checking each live; then turn `generated_pages` off.
+4. **Framework and handler**: drop the interface keys from the model (a major
+   version) and remove page generation at run time from the handler. From then on the
+   model describes data only, and every page is a page file.
 
 ## Open questions
 
 - **Forms write only listed fields.** This is stricter than today and closes a gap (a
   hand-made POST can't set a writable field the form never showed), but every form must
-  list its fields. The generated default form lists all writable fields, as now.
-- **Generated pages**: keep generating pages for classes that have no page file
-  indefinitely, or require every page to be declared once an app has moved over?
+  list its fields. `generate-pages` lists all writable fields in the forms it writes.
