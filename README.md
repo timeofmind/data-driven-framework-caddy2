@@ -112,8 +112,13 @@ ascent_m, avg_hr, max_hr`. Readers are pluggable (`importer.Register`).
   cookies; only their SHA-256 is stored.
 - Changing an account's password takes the current one: on the profile form, and as
   `current_password` in an API `PATCH` (admins excepted).
-- Admins (`admins` logins) bypass access rules and may set `write: admin` fields; an
-  empty `admins` (e.g. an unset environment variable) grants nothing.
+- Admins (`admins` logins, and accounts whose model `auth: {admin: <slot>}` flag is set)
+  bypass access rules and may set `write: admin` fields; an empty `admins` (e.g. an unset
+  environment variable) grants nothing, and only an admin can set the flag.
+- A record's party (`access: party`, e.g. the coach an athlete asked) may set only its
+  `write: party` fields through the API; others' values for those fields are ignored, as
+  in forms. Rows shared with a team (`access: shared`) are listed and returned to the
+  owner's groupmates only; values hidden by `private_when` are left out of responses.
 - CSRF: double-submit token on every form; API writes need `X-CSRF-Token`
   (from `GET /api/v1/me`).
 - Rate limits per client IP on sign-up, sign-in and uploads.

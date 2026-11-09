@@ -242,9 +242,10 @@ func (a *App) apiSave(rq *request, rec *runtime.Record, status int) error {
 			}
 		}
 	}
+	role := runtime.WriterRole(rec, rq.p)
 	for k := range in {
-		if s := c.Slot(k); s == nil || !s.WritableBy(rq.p.Admin) || k == ownerOf(c) {
-			delete(in, k) // read-only, admin-only (for others), unknown and owner fields are ignored, as in forms
+		if s := c.Slot(k); s == nil || !s.WritableAs(role) || k == ownerOf(c) {
+			delete(in, k) // read-only, admin- or party-only (for others), unknown and owner fields are ignored, as in forms
 		}
 	}
 	if errs := rec.AssignFor(rq.p, in, ownerOf(c)); errs != nil {
