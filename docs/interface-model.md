@@ -136,14 +136,76 @@ link: {page: new-scheduled-workout, set: {date: day}}   # prefill a form there
 
 The validator checks that the page exists and that every parameter it needs is given.
 
+## The catalogue: standard ways to show and change data
+
+The point of the split is a **standard, finite set** of ways data is presented and
+manipulated, the same in every app, each one familiar from everyday software. An app
+doesn't invent interactions; it picks from the catalogue and points each choice at its
+model. Each entry is defined by three things:
+
+1. **What it needs from the model**: the data shape that makes it meaningful. A
+   calendar needs records that occur on dates; a reorderable list needs a sequence.
+   The validator refuses a page that uses one on data without that shape.
+2. **How it shows the data.**
+3. **The manipulations it offers**, each mapped to exactly one kind of model write.
+
+### Manipulations
+
+Every way a person can change data through a page is one of these. Each has a
+familiar gesture and, always, a plain form equivalent — for keyboards, touch screens,
+screen readers and browsers without scripts — that makes the same write.
+
+| manipulation | gesture | form equivalent | model write |
+|---|---|---|---|
+| **create** | "Add", "+" on a day, "Add" under a parent | the create form | insert, with the starting values the place implies (the day, the parent) |
+| **edit** | "Edit"; later, click a value to edit it in place | the edit form | update of the listed fields |
+| **delete** | "Delete" | confirmation page | delete (the model's `on_delete` decides what follows) |
+| **reorder** | drag a row up or down | "Move to position" | the `sequence` slot, via `MoveTo` (the rows between shift, in one transaction) |
+| **reschedule** | drag an entry to another day | the edit form's date | the `occurs` slot(s), an end moving with its start |
+| **regroup** | drag a card to another column | the edit form's field | the enum or belongs_to slot the columns are made from |
+| **reparent** | drag a node under another | the edit form's parent | the self-referencing belongs_to slot |
+| **link / unlink** | add or remove a chip (a tag) | the join record's form | insert or delete a join row (many-to-many) |
+| **copy / other action** | the action's button | confirmation page | the model `action` |
+
+Whatever the gesture, the outcome is the same: the server applies the model's rules,
+the page changes only once the write is saved, and a refusal shows the model's own
+message (`must be on or after the start`) in place.
+
+### Presentations
+
+| component | needs from the model | shows | offers |
+|---|---|---|---|
+| `list` | any class | rows as a table, with search, sorting, filters, paging | create, delete; **reorder** if it orders by a `sequence`; `rank` numbering |
+| `detail` | one record | its fields, grouped; its children as lists | edit, delete, actions |
+| `form` | a class (create) or a record (edit) | its fields as inputs, with the model's rules live | create, edit |
+| `calendar` | `occurs` | a month grid; multi-day records on each day | create on a day, **reschedule** |
+| `chips` | a many-to-many (a join class) | the linked records as removable chips | **link / unlink** |
+| `picker` | any class | a searchable, filterable list or calendar | fills fields of a form on the page |
+| `upload` | an `import` block | a file drop | create (through the import) |
+| `text` | — | text | — |
+| *later:* `board` | an enum or belongs_to to make columns | cards in columns (e.g. by status) | **regroup**; reorder within a column if sequenced |
+| *later:* `tree` | a self-referencing belongs_to (`Tag.parent_id`) | nested records | **reparent** |
+| *later:* `timeline` | `occurs` | records as bars on a time axis | reschedule; change the end by dragging it |
+| *later:* `chart` | numbers, and `occurs` or an order | values over time or by category | — |
+| *later:* `map` | coordinates | records as places | — |
+
+Because each entry's needs are model features, the handler can also choose sensibly
+when a page isn't declared: a class that occurs on dates gets a calendar beside its
+list, a sequenced child list gets reorder, a many-to-many gets chips. Declared pages
+choose for themselves.
+
+New presentations and manipulations are added to the catalogue in this repository —
+generic, with their model needs, their write and their form equivalent — never in an
+app.
+
 ## Components
 
-A page is a list of components. Each one reads data from the model, shows it in some
+A page is a list of components, each an entry from the catalogue. Each one reads data from the model, shows it in some
 form, and may write data back. Every component has:
 
 | key | |
 |---|---|
-| `type` | `list`, `calendar`, `detail`, `form`, `picker`, `upload`, `text` |
+| `type` | `list`, `calendar`, `detail`, `form`, `chips`, `picker`, `upload`, `text` |
 | `name` | unique on the page; needed when another component or a template refers to it |
 | `title`, `intro` | heading and a line of text above it |
 | `when` | expression: the component is shown only when it holds |
@@ -193,6 +255,7 @@ What a component may write is declared, and the server enforces the declaration:
   accepts every writable slot of the class);
 - a **list** with `reorder` writes only the sequence slot it names;
 - a **calendar** with `drag` writes only the date slot(s) the model's `occurs` names;
+- **chips** create and delete only rows of their join class;
 - **actions** run model actions (`copy`) or delete.
 
 Writes are POSTed to the page's own URL with `_component=<name>` (and `_record=<id>`
@@ -297,6 +360,20 @@ Creates or edits one record.
 The model's rules still drive the form: `options` and `match` narrow select lists,
 `when` and `required_when` hide fields and switch `required`, `default_expr` fills
 starting values — in the browser as the form is filled in, and again on the server.
+
+### `chips`
+
+The records linked to the page's record through a many-to-many, as chips: × on a chip
+deletes its join row, and adding one creates a join row (choosing from the records the
+model's `link` and `match` allow).
+
+```yaml
+- type: chips
+  title: "Tags"
+  data: {of: tags}                        # the has_many to the join class
+  link: tag_id                            # the join class's FK to what is shown
+  group_by: category_id                   # optional
+```
 
 ### `picker`
 
@@ -462,11 +539,10 @@ components:
     reorder: {field: position, with: drag}
     add: {page: new-set, label: "Add set", set: {workout_id: record.id}}
 
-  - type: list
+  - type: chips
     title: "Tags"
     data: {of: tags}
-    fields: [tag_id]
-    add: {page: new-workout-tag, label: "Add tag", set: {workout_id: record.id}}
+    link: tag_id
 
   - type: list
     title: "Scheduled"
