@@ -1,7 +1,7 @@
-// Package app is a complete web application generated at runtime from a
-// data-driven-framework-go schema: HTML pages (lists, calendars, detail pages
-// with related records, forms), a JSON API with OpenAPI, sign-up and sessions,
-// schema-driven access rules, and file uploads mapped by the schema's import blocks.
+// Package app serves one data-driven application: its pages (drawn by the
+// framework's web-ux package from the app's page files), a JSON API with
+// OpenAPI, sign-up and sessions, the model's access rules, file uploads
+// mapped by the model's import blocks, and a calendar feed.
 //
 // It is a plain http.Handler-style component; the Caddy module in the parent
 // package wraps it, and tests drive it with httptest.
@@ -18,7 +18,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,10 +26,12 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/model"
 	"github.com/timeofmind/data-driven-framework-go/runtime"
 	"github.com/timeofmind/data-driven-framework-go/schema"
+	"github.com/timeofmind/data-driven-framework-go/ux"
+	webux "github.com/timeofmind/data-driven-framework-go/web-ux"
 )
 
 // Config configures an App. Everything about the application itself comes
-// from its directory (AppDir: app.yaml, schema files, theme); the rest is
+// from its directory (AppDir: app.yaml, model, pages, theme); the rest is
 // deployment.
 type Config struct {
 	AppDir string
@@ -55,20 +56,22 @@ type Config struct {
 type App struct {
 	cfg     Config
 	man     *Manifest
-	uploads *runtime.Handle // the manifest's upload class, if any
+	uploads *runtime.Handle // the upload view's class, if any
 	Model   *model.Model
 	Reg     *runtime.Registry
+	Pages   *ux.Site
+	engine  *ux.Engine
+	site    *webux.Site
 	auth    *runtime.Handle
-	bySlug  map[string]*runtime.Handle
-	views   *views
+	bySlug  map[string]*runtime.Handle // API resources
 	limiter *limiter
 	log     *slog.Logger
 	admins  map[string]bool
-	rules   *clientRules
+	loc     *time.Location
 }
 
-// New loads the schema, connects, brings the database up to date (never
-// dropping anything) and prepares templates.
+// New loads the model and pages, connects, brings the database up to date
+// (never dropping anything) and prepares the pages' templates.
 func New(ctx context.Context, cfg Config) (*App, error) {
 	if cfg.AppDir == "" {
 		return nil, errors.New("datadriven: app directory is required")
@@ -83,7 +86,15 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	if man.Timezone == "" {
 		man.Timezone = "UTC"
 	}
-	files, err := man.SchemaFiles()
+	loc, err := time.LoadLocation(man.Timezone)
+	if err != nil {
+		return nil, fmt.Errorf("app.yaml timezone: %w", err)
+	}
+	files, err := man.ModelFiles()
+	if err != nil {
+		return nil, err
+	}
+	pageFiles, err := man.PageFiles()
 	if err != nil {
 		return nil, err
 	}
@@ -98,6 +109,10 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		cfg.Logger = slog.Default()
 	}
 	m, err := schema.LoadFiles(files...)
+	if err != nil {
+		return nil, err
+	}
+	pages, err := ux.Load(m, pageFiles...)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +134,8 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	for _, p := range res.Pending {
 		cfg.Logger.Warn("schema difference needs a manual migration", "detail", p)
 	}
-	a := &App{cfg: cfg, man: man, Model: m, Reg: reg, bySlug: map[string]*runtime.Handle{}, limiter: newLimiter(), log: cfg.Logger, admins: map[string]bool{}}
+	a := &App{cfg: cfg, man: man, Model: m, Reg: reg, Pages: pages, bySlug: map[string]*runtime.Handle{},
+		limiter: newLimiter(), log: cfg.Logger, admins: map[string]bool{}, loc: loc}
 	for _, ad := range cfg.Admins {
 		a.admins[strings.ToLower(strings.TrimSpace(ad))] = true
 	}
@@ -130,52 +146,40 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	if h, err := reg.AuthClass(); err == nil {
 		a.auth = h
 	}
-	if err := a.createSessionTable(ctx); err != nil {
+	fail := func(err error) (*App, error) {
 		reg.Close()
 		return nil, err
+	}
+	if c := pages.UploadClass(); c != nil {
+		if len(acceptedFormats(c)) == 0 {
+			return fail(fmt.Errorf("upload: none of %v has a file reader (available: %v)", c.Import.Formats, importerNames()))
+		}
+		a.uploads = reg.MustClass(c.Name)
+	}
+	if err := a.createSessionTable(ctx); err != nil {
+		return fail(err)
 	}
 	if err := a.createFeedTable(ctx); err != nil {
-		reg.Close()
-		return nil, err
+		return fail(err)
 	}
-	if err := a.checkManifest(); err != nil {
-		reg.Close()
-		return nil, err
+	if a.engine, err = ux.NewEngine(pages, reg, cfg.Logger, loc); err != nil {
+		return fail(err)
 	}
-	if err := buildClientRules(a); err != nil {
-		reg.Close()
-		return nil, err
-	}
-	if a.views, err = loadViews(man.ThemeDir()); err != nil {
-		reg.Close()
-		return nil, err
+	a.site, err = webux.New(webux.Options{
+		Engine: a.engine, Name: man.Name, Tagline: man.Tagline, Nav: man.Nav, ThemeDir: man.ThemeDir(),
+		Signup: a.auth != nil && man.signupEnabled(), Log: cfg.Logger,
+		Upload: a.uploadView, UploadInfo: a.uploadInfo,
+		SignedOut: func(rq *webux.Request) {
+			if rq.Viewer != nil {
+				a.endAllSessions(rq.R.Context(), rq.Viewer.ID)
+			}
+			a.clearSession(rq.W)
+		},
+	})
+	if err != nil {
+		return fail(err)
 	}
 	return a, nil
-}
-
-// checkManifest verifies the manifest's class references against the schema.
-func (a *App) checkManifest() error {
-	for _, n := range a.man.Nav {
-		if c := a.Model.Class(n); c == nil || c.PKSlot() == nil {
-			return fmt.Errorf("app.yaml nav: %q is not a concrete class", n)
-		}
-	}
-	for _, hs := range a.man.Home {
-		if c := a.Model.Class(hs.Class); c == nil || c.PKSlot() == nil {
-			return fmt.Errorf("app.yaml home: %q is not a concrete class", hs.Class)
-		}
-	}
-	if u := a.man.Uploads; u != nil {
-		h, err := a.Reg.Class(u.Class)
-		if err != nil || h.Class.Import == nil {
-			return fmt.Errorf("app.yaml uploads: class %q needs an import block in the schema", u.Class)
-		}
-		if len(acceptedFormats(h.Class)) == 0 {
-			return fmt.Errorf("app.yaml uploads: none of %v has a file reader (available: %v)", h.Class.Import.Formats, importerNames())
-		}
-		a.uploads = h
-	}
-	return nil
 }
 
 // Close releases the database.
@@ -209,13 +213,14 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 
+	feedPage, _ := a.Pages.FeedCalendar()
 	switch {
-	case path == "/":
-		a.wrap(rq, a.home)
 	case parts[0] == "static" && len(parts) >= 2:
-		a.static(rq, strings.Join(parts[1:], "/"))
+		a.site.ServeStatic(a.webRequest(rq), strings.Join(parts[1:], "/"))
 	case parts[0] == "_dd" && len(parts) == 2:
-		a.serveRules(rq, parts[1])
+		if !a.site.ServeScript(a.webRequest(rq), parts[1]) {
+			http.NotFound(w, r)
+		}
 	case path == "/signup" && a.auth != nil && a.man.signupEnabled():
 		a.wrap(rq, a.signup)
 	case path == "/login" && a.auth != nil:
@@ -224,53 +229,20 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		a.wrap(rq, a.logout)
 	case path == "/me" && a.auth != nil:
 		a.wrap(rq, a.me)
-	case path == "/calendar/feed" && a.auth != nil:
+	case feedPage != nil && a.auth != nil && path == strings.TrimRight(feedPage.Path, "/")+"/feed":
 		a.wrap(rq, a.feedPage)
-	case strings.HasPrefix(path, "/calendar/feed/") && a.auth != nil:
-		a.feedICS(w, r, strings.TrimPrefix(path, "/calendar/feed/"))
-	case path == "/calendar":
-		a.wrap(rq, a.calendar)
-	case path == "/upload" && a.uploads != nil:
-		a.wrap(rq, a.uploadPage)
-	case parts[0] == "c" && len(parts) >= 2:
-		hd, ok := a.bySlug[parts[1]]
-		if !ok {
-			return false
-		}
-		rq.handle = hd
-		switch {
-		case len(parts) == 2:
-			a.wrap(rq, a.list)
-		case len(parts) == 3 && parts[2] == "new":
-			a.wrap(rq, a.create)
-		case len(parts) >= 3:
-			id, err := strconv.ParseInt(parts[2], 10, 64)
-			if err != nil || id <= 0 {
-				return false
-			}
-			rq.id = id
-			switch {
-			case len(parts) == 3:
-				a.wrap(rq, a.detail)
-			case len(parts) == 4 && parts[3] == "edit":
-				a.wrap(rq, a.edit)
-			case len(parts) == 4 && parts[3] == "delete":
-				a.wrap(rq, a.remove)
-			case len(parts) == 4 && hd.Class.ActionByName(parts[3]) != nil:
-				name := parts[3]
-				a.wrap(rq, func(rq *request) error { return a.action(rq, name) })
-			case len(parts) == 4 && parts[3] == "move":
-				a.wrap(rq, a.move)
-			case len(parts) == 4 && parts[3] == "reschedule":
-				a.wrap(rq, a.reschedule)
-			default:
-				return false
-			}
-		}
+	case feedPage != nil && a.auth != nil && strings.HasPrefix(path, strings.TrimRight(feedPage.Path, "/")+"/feed/"):
+		a.feedICS(w, r, strings.TrimPrefix(path, strings.TrimRight(feedPage.Path, "/")+"/feed/"))
 	case parts[0] == "api" && len(parts) >= 2 && parts[1] == "v1":
 		a.api(rq, parts[2:])
 	default:
-		return false
+		if p, _ := a.Pages.Match(path); p == nil {
+			return false
+		}
+		a.wrap(rq, func(rq *request) error {
+			a.site.ServePage(a.webRequest(rq), path)
+			return nil
+		})
 	}
 	return true
 }
@@ -284,10 +256,13 @@ type request struct {
 	csrf   string
 	handle *runtime.Handle
 	id     int64
-	search string // filter values the record was found with (see library.go)
 }
 
 func (rq *request) ctx() context.Context { return rq.r.Context() }
+
+func (a *App) webRequest(rq *request) *webux.Request {
+	return &webux.Request{W: rq.w, R: rq.r, Viewer: rq.p, CSRF: rq.csrf, Base: a.cfg.BasePath}
+}
 
 // httpError is returned by handlers to produce an error page or JSON error.
 type httpError struct {
@@ -305,12 +280,16 @@ var (
 	errForbidden = errStatus(http.StatusForbidden, "You don't have permission to do that")
 )
 
-// wrap resolves the session and CSRF cookie, runs the page handler, and
-// renders an error page if it fails.
+// wrap resolves the session and CSRF cookie, checks the CSRF token of a
+// POST, runs the handler, and renders an error page if it fails.
 func (a *App) wrap(rq *request, fn func(*request) error) {
 	a.resolveSession(rq)
 	a.ensureCSRF(rq)
 	if rq.r.Method == http.MethodPost && !a.checkCSRF(rq, rq.r.PostFormValue("_csrf")) {
+		if rq.r.PostFormValue("_json") == "1" {
+			writeJSON(rq, http.StatusForbidden, map[string]string{"error": "Your page expired. Reload it and try again."})
+			return
+		}
 		a.renderError(rq, errStatus(http.StatusForbidden, "Your form expired. Go back, reload the page and try again."))
 		return
 	}
@@ -321,23 +300,21 @@ func (a *App) wrap(rq *request, fn func(*request) error) {
 
 func (a *App) renderError(rq *request, err error) {
 	var he *httpError
-	if !errors.As(err, &he) {
-		if errors.Is(err, runtime.ErrNotFound) {
-			he = errNotFound.(*httpError)
-		} else {
-			a.log.Error("request failed", "path", rq.r.URL.Path, "error", err)
-			he = &httpError{status: http.StatusInternalServerError, msg: "Something went wrong on our side. Please try again."}
-		}
-	}
-	if he.status == http.StatusUnauthorized && rq.r.Method == http.MethodGet {
-		http.Redirect(rq.w, rq.r, a.url("/login")+"?next="+urlQueryEscape(rq.r.URL.RequestURI()), http.StatusSeeOther)
+	if errors.As(err, &he) {
+		a.site.RenderError(a.webRequest(rq), he.status, he.msg)
 		return
 	}
-	rq.w.WriteHeader(he.status)
-	a.render(rq, "error", he.msg, map[string]any{"Status": he.status, "Message": he.msg})
+	a.site.Error(a.webRequest(rq), err)
 }
 
 func (a *App) url(path string) string { return a.cfg.BasePath + path }
+
+func (a *App) requireLogin(rq *request) error {
+	if rq.p == nil {
+		return errStatus(http.StatusUnauthorized, "Please sign in first")
+	}
+	return nil
+}
 
 // ---- sessions ----
 
@@ -404,9 +381,13 @@ func (a *App) endSession(rq *request) {
 	if c, err := rq.r.Cookie(sessionCookie); err == nil {
 		a.Reg.DB.ExecContext(rq.ctx(), "DELETE FROM "+a.Reg.Dialect.Quote(sessionsTable)+" WHERE token_hash = ?", tokenHash(c.Value))
 	}
-	http.SetCookie(rq.w, &http.Cookie{Name: sessionCookie, Value: "", Path: a.cookiePath(), HttpOnly: true,
-		Secure: a.cfg.SecureCookies, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	a.clearSession(rq.w)
 	rq.p = nil
+}
+
+func (a *App) clearSession(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: a.cookiePath(), HttpOnly: true,
+		Secure: a.cfg.SecureCookies, SameSite: http.SameSiteLaxMode, MaxAge: -1})
 }
 
 func (a *App) endAllSessions(ctx context.Context, principalID int64) {

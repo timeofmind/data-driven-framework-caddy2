@@ -1,0 +1,8 @@
+path: "/c/terrains/{id}/edit"
+title: "Edit {record._title}"
+access: signed_in
+record: {class: Terrain, id: id}
+interface_views:
+  - type: form
+    edits: record
+    fields: [region_id, parent_id, name]

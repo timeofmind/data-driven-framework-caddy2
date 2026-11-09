@@ -93,14 +93,14 @@ func TestRules(t *testing.T) {
 }
 
 // TestCalendarRanges: a multi-day meet shows on each of its days in its own
-// calendar; it stays off its creator's personal calendar (personal_calendar:
-// false), where an entry — dated through its link to the meet — shows instead.
+// calendar; it isn't on its creator's personal calendar (which doesn't show
+// meets), where an entry — dated through its link to the meet — shows instead.
 func TestCalendarRanges(t *testing.T) {
 	_, srv := newTestApp(t)
 	b := newBrowser(t, srv)
 	b.signup("ann@example.org", "Ann")
 	meet := mustID(b.create("/c/meets/new", url.Values{"name": {"Coast relays"}, "start_date": {"2027-03-12"}, "end_date": {"2027-03-14"}}))
-	_, cal, _ := b.get("/c/meets?view=calendar&month=2027-03")
+	_, cal, _ := b.get("/c/meets/calendar?month=2027-03")
 	if strings.Count(cal, ">Coast relays<") != 3 {
 		t.Errorf("a three-day meet should show on three days, got %d", strings.Count(cal, ">Coast relays<"))
 	}
@@ -121,8 +121,8 @@ func TestCalendarRanges(t *testing.T) {
 	}
 }
 
-// TestReschedule: entries the viewer may edit can be dragged to another day
-// (the script and the item's reschedule URL are on the page); others can't.
+// TestReschedule: entries the viewer may edit, of a class the calendar lets
+// be dragged, can be moved to another day; others can't.
 func TestReschedule(t *testing.T) {
 	a, srv := newTestApp(t)
 	ann := newBrowser(t, srv)
@@ -130,29 +130,35 @@ func TestReschedule(t *testing.T) {
 	walk := mustID(ann.create("/c/walks/new", url.Values{"day": {"2027-03-10"}, "title": {"Hill loop"}}))
 	ann.create("/c/meetups/new", url.Values{"title": {"Sunday stroll"}, "day": {"2027-03-14"}})
 	_, cal, _ := ann.get("/calendar?month=2027-03")
-	move := "/c/walks/" + itoa(walk) + "/reschedule"
-	if !strings.Contains(cal, `data-dd-move="`+move+`"`) || !strings.Contains(cal, "/_dd/calendar.") || !strings.Contains(cal, `data-date="2027-03-10"`) {
+	m := regexp.MustCompile(`data-dd-record="` + itoa(walk) + `" data-dd-show="(\d+)"`).FindStringSubmatch(cal)
+	if m == nil || !strings.Contains(cal, "/_dd/calendar.") || !strings.Contains(cal, `data-date="2027-03-10"`) || !strings.Contains(cal, `data-dd-view="calendar1"`) {
 		t.Fatalf("a walk can be dragged:\n%s", cal)
 	}
-	if strings.Count(cal, "data-dd-move=") != 1 {
-		t.Error("meetups say calendar_move: false")
+	if strings.Count(cal, "data-dd-record=") != 1 {
+		t.Error("meetups are not draggable on the calendar (no drag in its show)")
 	}
 	_, js, h := ann.get(strings.Split(strings.Split(cal, `<script src="`)[1], `"`)[0])
-	if !strings.Contains(js, "data-dd-move") || !strings.Contains(h.Get("Cache-Control"), "immutable") {
+	if !strings.Contains(js, "data-dd-record") || !strings.Contains(h.Get("Cache-Control"), "immutable") {
 		t.Error("the script is served, cached for good")
 	}
 	tok := ann.csrf("/c/walks/new")
-	code, body, _ := ann.post(move, url.Values{"_csrf": {tok}, "date": {"2027-03-12"}})
+	move := "/calendar"
+	drag := func(b *browser, tok, date string) (int, string) {
+		code, body, _ := b.post(move, url.Values{"_csrf": {tok}, "_view": {"calendar1"}, "_op": {"reschedule"}, "_show": {m[1]},
+			"_record": {itoa(walk)}, "_json": {"1"}, "date": {date}})
+		return code, body
+	}
+	code, body := drag(ann, tok, "2027-03-12")
 	got, _ := a.Reg.MustClass("Walk").Load(t.Context(), walk)
 	if code != http.StatusOK || !strings.Contains(body, "2027-03-12") || got.String("day") != "2027-03-12" {
 		t.Errorf("move to the 12th: %d %s %s", code, body, got.String("day"))
 	}
-	if code, body, _ := ann.post(move, url.Values{"_csrf": {tok}, "date": {"soon"}}); code != http.StatusUnprocessableEntity || !strings.Contains(body, "must be a date") {
+	if code, body := drag(ann, tok, "soon"); code != http.StatusUnprocessableEntity || !strings.Contains(body, "must be a date") {
 		t.Errorf("a bad date: %d %s", code, body)
 	}
 	ben := newBrowser(t, srv)
 	ben.signup("ben@example.org", "Ben")
-	if code, _, _ := ben.post(move, url.Values{"_csrf": {ben.csrf("/c/walks/new")}, "date": {"2027-03-01"}}); code == http.StatusOK {
+	if code, _ := drag(ben, ben.csrf("/c/walks/new"), "2027-03-01"); code == http.StatusOK {
 		t.Error("only someone who may edit the walk can move it")
 	}
 	if _, cal, _ := ben.get("/calendar?month=2027-03"); strings.Contains(cal, "/_dd/calendar.") {
@@ -241,8 +247,8 @@ func TestLabelWhen(t *testing.T) {
 	}
 }
 
-// TestInsertAtPosition: an ordered list (sequence) shows its numbers and can
-// take a new entry at any position, moving the later ones down.
+// TestMoveToPosition: an ordered list (sequence) shows its numbers, adds at
+// the end, and a row can be moved to another position.
 func TestMoveToPosition(t *testing.T) {
 	a, srv := newTestApp(t)
 	b := newBrowser(t, srv)
@@ -276,16 +282,20 @@ func TestMoveToPosition(t *testing.T) {
 		t.Fatalf("a row of an ordered list offers to move it:\n%s", page)
 	}
 	tok := b.csrf(stagePage)
-	code, _, loc := b.post(stagePage+"/move", url.Values{"_csrf": {tok}, "_position": {"3"}})
+	move := func(b *browser, tok, pos string) (int, string) {
+		code, _, loc := b.post(stagePage, url.Values{"_csrf": {tok}, "_view": {"detail1"}, "_op": {"move"}, "_position": {pos}})
+		return code, loc
+	}
+	code, loc := move(b, tok, "3")
 	if code != http.StatusSeeOther || loc != "/c/trips/"+itoa(walk) || order() != "1:1 2:2 3:9" {
 		t.Errorf("move 1 to 3: %d %q %s", code, loc, order())
 	}
-	if code, _, _ := b.post(stagePage+"/move", url.Values{"_csrf": {tok}, "_position": {"4"}}); code != http.StatusBadRequest || order() != "1:1 2:2 3:9" {
+	if code, _ := move(b, tok, "4"); code != http.StatusBadRequest || order() != "1:1 2:2 3:9" {
 		t.Errorf("out of range: %d %s", code, order())
 	}
 	other := newBrowser(t, srv)
 	other.signup("bob@example.org", "Bob")
-	if code, _, _ := other.post(stagePage+"/move", url.Values{"_csrf": {other.csrf("/c/trips/new")}, "_position": {"1"}}); code == http.StatusSeeOther || order() != "1:1 2:2 3:9" {
+	if code, _ := move(other, other.csrf("/c/trips/new"), "1"); code == http.StatusSeeOther || order() != "1:1 2:2 3:9" {
 		t.Errorf("only someone who may edit it can move it: %d %s", code, order())
 	}
 }

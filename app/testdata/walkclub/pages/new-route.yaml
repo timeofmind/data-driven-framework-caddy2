@@ -1,0 +1,7 @@
+path: /c/routes/new
+access: signed_in
+interface_views:
+  - type: form
+    creates: Route
+    fields: [name, distance_km, visibility, based_on_id]
+    cancel: {page: routes}

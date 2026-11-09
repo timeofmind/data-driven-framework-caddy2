@@ -1,1 +1,2 @@
-{{define "layout"}}<!DOCTYPE html><html><head><title>{{.Title}}</title><link rel="stylesheet" href="{{.Base}}/static/club.css"></head><body data-theme="walkclub">{{template "content" .}}</body></html>{{end}}
+{{define "head"}}<!DOCTYPE html><html><head><title>{{.Title}}</title><link rel="stylesheet" href="{{.Base}}/static/club.css"></head><body data-theme="walkclub"><nav>{{range .Nav}}<a href="{{.URL}}">{{.Label}}</a>{{end}}</nav>{{end}}
+{{define "foot"}}</body></html>{{end}}

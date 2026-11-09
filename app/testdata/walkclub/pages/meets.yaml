@@ -1,0 +1,13 @@
+path: /c/meets
+title: Meets
+interface_views:
+  - type: text
+    links:
+      - {page: meets-calendar, label: Calendar view, style: ghost}
+  - type: list
+    name: list
+    data: {class: Meet}
+    fields: [created_by, name, start_date, end_date]
+    search: [name]
+    mine: true
+    add: {page: new-meet, label: New meet}

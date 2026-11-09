@@ -1,0 +1,7 @@
+path: /c/walks/new
+access: signed_in
+interface_views:
+  - type: form
+    creates: Walk
+    fields: [route_id, day, title, kind, distance_km, duration, moving, visibility]
+    cancel: {page: walks}

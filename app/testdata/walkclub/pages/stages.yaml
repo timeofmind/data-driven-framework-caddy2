@@ -1,0 +1,8 @@
+path: /c/stages
+title: Stages
+interface_views:
+  - type: list
+    name: list
+    data: {class: Stage}
+    fields: [trip_id, n, km, by, minutes, effort, path]
+    add: {page: new-stage, label: New stage}

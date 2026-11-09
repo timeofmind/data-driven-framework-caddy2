@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/timeofmind/data-driven-framework-go/runtime"
+	"github.com/timeofmind/data-driven-framework-go/ux"
 )
 
-// The personal calendar as an iCalendar feed, for Google Calendar ("Add
+// A calendar view's entries (feed: true) as an iCalendar feed, for Google Calendar ("Add
 // other calendars → From URL"), Apple Calendar or Outlook: everything on the
 // signed-in person's calendar, at a private URL holding a random token.
 // Resetting the token cuts off the old URL at once.
@@ -65,6 +65,12 @@ func absURL(r *http.Request, path string) string {
 	return scheme + "://" + r.Host + path
 }
 
+// feedPath is the feed page's path: under the calendar that offers it.
+func (a *App) feedPath() string {
+	p, _ := a.Pages.FeedCalendar()
+	return strings.TrimRight(p.Path, "/") + "/feed"
+}
+
 // feedPage shows the person's private feed URL and resets it on POST.
 func (a *App) feedPage(rq *request) error {
 	if err := a.requireLogin(rq); err != nil {
@@ -75,13 +81,14 @@ func (a *App) feedPage(rq *request) error {
 		return err
 	}
 	if rq.r.Method == http.MethodPost {
-		http.Redirect(rq.w, rq.r, a.url("/calendar/feed")+"?reset=1", http.StatusSeeOther)
+		http.Redirect(rq.w, rq.r, a.url(a.feedPath())+"?reset=1", http.StatusSeeOther)
 		return nil
 	}
-	a.render(rq, "feed", "Calendar feed", map[string]any{
-		"URL":      absURL(rq.r, a.url("/calendar/feed/"+tok+".ics")),
+	cal, _ := a.Pages.FeedCalendar()
+	a.site.Render(a.webRequest(rq), "feed", "Calendar feed", map[string]any{
+		"URL":      absURL(rq.r, a.url(a.feedPath()+"/"+tok+".ics")),
 		"Reset":    rq.r.URL.Query().Get("reset") == "1",
-		"Calendar": a.url("/calendar"),
+		"Calendar": a.url(cal.Path),
 	})
 	return nil
 }
@@ -107,9 +114,20 @@ func (a *App) feedICS(w http.ResponseWriter, r *http.Request, file string) {
 		return
 	}
 	p := a.principal(rec)
+	page, view := a.Pages.FeedCalendar()
+	if page == nil {
+		http.NotFound(w, r)
+		return
+	}
 	now := time.Now()
 	from := now.AddDate(0, -feedMonthsBack, 0).Format("2006-01-02")
 	to := now.AddDate(0, feedMonthsAhead, 0).Format("2006-01-02")
+	entries, err := a.engine.Entries(&ux.Request{Ctx: ctx, Viewer: p, Base: a.cfg.BasePath}, page, view.Name, from, to)
+	if err != nil {
+		a.log.Error("calendar feed", "error", err)
+		http.Error(w, "calendar unavailable", http.StatusInternalServerError)
+		return
+	}
 	var b strings.Builder
 	line := func(s string) { b.WriteString(foldICS(s)) }
 	line("BEGIN:VCALENDAR")
@@ -120,38 +138,24 @@ func (a *App) feedICS(w http.ResponseWriter, r *http.Request, file string) {
 	line("X-WR-CALNAME:" + escICS(a.man.Name))
 	line("X-PUBLISHED-TTL:PT1H")
 	stamp := now.UTC().Format("20060102T150405Z")
-	for _, c := range a.Model.ConcreteClasses() {
-		if c.Calendar == "" || ownerOf(c) == "" || c.NotPersonal {
+	for _, en := range entries {
+		start, err1 := time.Parse("2006-01-02", en.From)
+		end, err2 := time.Parse("2006-01-02", en.To)
+		if err1 != nil || err2 != nil {
 			continue
 		}
-		h := a.Reg.MustClass(c.Name)
-		q, ok := h.Scope(runtime.Query{Where: []runtime.Cond{runtime.Eq(ownerOf(c), p.ID)}, Limit: 5000}, p)
-		if !ok {
-			continue
+		line("BEGIN:VEVENT")
+		line(fmt.Sprintf("UID:%s-%d@%s", strings.ToLower(en.Rec.Class.Name), en.Rec.ID(), r.Host))
+		line("DTSTAMP:" + stamp)
+		line("DTSTART;VALUE=DATE:" + start.Format("20060102"))
+		line("DTEND;VALUE=DATE:" + end.AddDate(0, 0, 1).Format("20060102")) // all-day: the end is exclusive
+		line("SUMMARY:" + escICS(en.Text))
+		line("CATEGORIES:" + escICS(en.Category))
+		if en.URL != "" {
+			line("URL:" + absURL(r, en.URL))
 		}
-		spans, err := h.CalendarSpans(ctx, q, from, to)
-		if err != nil {
-			a.log.Error("calendar feed", "class", c.Name, "error", err)
-			http.Error(w, "calendar unavailable", http.StatusInternalServerError)
-			return
-		}
-		for _, sp := range spans {
-			start, err1 := time.Parse("2006-01-02", sp.From)
-			end, err2 := time.Parse("2006-01-02", sp.To)
-			if err1 != nil || err2 != nil {
-				continue
-			}
-			line("BEGIN:VEVENT")
-			line(fmt.Sprintf("UID:%s-%d@%s", strings.ToLower(c.Name), sp.Rec.ID(), r.Host))
-			line("DTSTAMP:" + stamp)
-			line("DTSTART;VALUE=DATE:" + start.Format("20060102"))
-			line("DTEND;VALUE=DATE:" + end.AddDate(0, 0, 1).Format("20060102")) // all-day: the end is exclusive
-			line("SUMMARY:" + escICS(runtime.CalendarText(sp.Rec)))
-			line("CATEGORIES:" + escICS(c.EffectiveLabel()))
-			line("URL:" + absURL(r, a.recordURL(c, sp.Rec.ID())))
-			line("TRANSP:TRANSPARENT")
-			line("END:VEVENT")
-		}
+		line("TRANSP:TRANSPARENT")
+		line("END:VEVENT")
 	}
 	line("END:VCALENDAR")
 	h := w.Header()

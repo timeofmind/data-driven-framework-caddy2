@@ -1,14 +1,8 @@
 # Test fixture: a small walking-club app exercising every generic feature.
 name: "Walk Club"
 tagline: "A fixture application for the datadriven handler's tests."
-schema: [schema/*.yaml]
+model: [model/*.yaml]
+pages: [pages/*.yaml]
 timezone: America/Vancouver
 signup: {enabled: true, intro: "Join the club."}
-home:
-  - {class: Meetup, title: "Meetups"}
-  - {class: Walk, mine: true, title: "Your walks"}
-uploads:
-  class: Walk
-  title: "Upload GPS files"
-  intro: "GPX or FIT files from your device."
-  help: ["Export a GPX from your phone app."]
+nav: [calendar, walks, routes, meetups, trips, meets, outings, upload]

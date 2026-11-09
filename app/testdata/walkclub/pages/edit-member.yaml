@@ -1,0 +1,14 @@
+path: "/c/members/{id}/edit"
+title: "Edit {record._title}"
+access: signed_in
+record: {class: Member, id: id}
+interface_views:
+  - type: form
+    edits: record
+    fields:
+      - pw
+      - name
+      - tz
+      - group: Account
+        fields:
+          - {field: email, as: email}

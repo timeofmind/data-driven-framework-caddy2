@@ -1,0 +1,9 @@
+path: /upload
+title: Upload GPS files
+label: Upload
+access: signed_in
+interface_views:
+  - type: upload
+    class: Walk
+    intro: GPX or FIT files from your device.
+    help: [Export a GPX from your phone app.]

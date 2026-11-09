@@ -1,0 +1,13 @@
+path: /c/walks
+title: Walks
+interface_views:
+  - type: text
+    links:
+      - {page: walks-calendar, label: Calendar view, style: ghost}
+  - type: list
+    name: list
+    data: {class: Walk, order: day desc}
+    fields: [member_id, route_id, day, title, kind, distance_km, duration, moving]
+    search: [title]
+    mine: true
+    add: {page: new-walk, label: New walk}

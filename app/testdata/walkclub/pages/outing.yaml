@@ -1,0 +1,10 @@
+path: "/c/outings/{id}"
+record: {class: Outing, id: id}
+default_for: Outing
+interface_views:
+  - type: detail
+    fields: [member_id, route_id]
+    actions:
+      - edit: {page: edit-outing}
+      - delete:
+          then: {page: outings}

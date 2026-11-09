@@ -1,0 +1,9 @@
+path: /c/members
+title: Members
+interface_views:
+  - type: list
+    name: list
+    data: {class: Member}
+    fields: [name, tz]
+    search: [name]
+    mine: true

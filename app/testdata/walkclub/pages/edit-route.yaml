@@ -1,0 +1,8 @@
+path: "/c/routes/{id}/edit"
+title: "Edit {record._title}"
+access: signed_in
+record: {class: Route, id: id}
+interface_views:
+  - type: form
+    edits: record
+    fields: [name, distance_km, visibility, based_on_id]

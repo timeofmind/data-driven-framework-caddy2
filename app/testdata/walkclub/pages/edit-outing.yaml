@@ -1,0 +1,8 @@
+path: "/c/outings/{id}/edit"
+title: "Edit {record._title}"
+access: signed_in
+record: {class: Outing, id: id}
+interface_views:
+  - type: form
+    edits: record
+    fields: [route_id, day]

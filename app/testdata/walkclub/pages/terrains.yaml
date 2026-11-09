@@ -1,0 +1,10 @@
+path: /c/terrains
+title: Terrains
+interface_views:
+  - type: list
+    name: list
+    data: {class: Terrain}
+    fields: [region_id, parent_id, name]
+    search: [name]
+    mine: true
+    add: {page: new-terrain, label: New terrain}

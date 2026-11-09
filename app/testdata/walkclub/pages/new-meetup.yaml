@@ -1,0 +1,7 @@
+path: /c/meetups/new
+access: signed_in
+interface_views:
+  - type: form
+    creates: Meetup
+    fields: [title, day, open]
+    cancel: {page: meetups}

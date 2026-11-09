@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/timeofmind/data-driven-framework-go/generator"
+	"github.com/timeofmind/data-driven-framework-go/model"
 	"github.com/timeofmind/data-driven-framework-go/runtime"
+	"github.com/timeofmind/data-driven-framework-go/ux"
 )
 
 // api serves /api/v1/... — the same resources and access rules as the HTML
@@ -83,7 +85,7 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 		}
 		switch m {
 		case http.MethodGet:
-			return writeJSON(rq, http.StatusOK, rec)
+			return writeJSON(rq, http.StatusOK, rec.PublicFor(rq.p))
 		case http.MethodPut, http.MethodPatch:
 			if ok, _ := a.Reg.Writable(rq.ctx(), rec, rq.p); !ok {
 				return errForbidden
@@ -104,8 +106,76 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 	return errNotFound
 }
 
+// loadReadable loads the request's record, answering 404 when it doesn't
+// exist or the viewer may not read it (a private record's existence is not
+// revealed).
+func (a *App) loadReadable(rq *request) (*runtime.Record, error) {
+	rec, err := rq.handle.Load(rq.ctx(), rq.id)
+	if err != nil {
+		return nil, err
+	}
+	ok, err := a.Reg.Readable(rq.ctx(), rec, rq.p)
+	if err != nil && !errors.Is(err, runtime.ErrNotFound) {
+		return nil, err
+	}
+	if !ok {
+		return nil, errNotFound
+	}
+	a.Reg.LoadLinks(rq.ctx(), rec)
+	return rec, nil
+}
+
+// apiQuery reads a list's conditions from the query string: field=value for
+// enums, booleans, dates and links; q searches the title field; mine=1 the
+// viewer's own; order=field [asc|desc].
+func (a *App) apiQuery(rq *request) (runtime.Query, error) {
+	c := rq.handle.Class
+	vals := rq.r.URL.Query()
+	var q runtime.Query
+	for key, vs := range vals {
+		s := c.Slot(key)
+		if s == nil || len(vs) == 0 || vs[0] == "" {
+			continue
+		}
+		if c.BelongsToVia(key) == nil && s.Type != "enum" && s.Type != "boolean" && s.Type != "date" {
+			continue
+		}
+		v, err := runtime.Coerce(s, vs[0])
+		if err != nil {
+			continue
+		}
+		q.Where = append(q.Where, runtime.Cond{Field: key, Op: "=", Value: v})
+	}
+	if search := strings.TrimSpace(vals.Get("q")); search != "" {
+		if ds := c.DisplaySlot(); ds != nil && (ds.Type == "string" || ds.Type == "text") {
+			q.Where = append(q.Where, runtime.Cond{Field: ds.Name, Op: "like", Value: "%" + search + "%"})
+		}
+	}
+	if vals.Get("mine") == "1" {
+		if rq.p == nil {
+			return q, errStatus(http.StatusUnauthorized, "sign in required")
+		}
+		if o := ownerOf(c); o != "" {
+			q.Where = append(q.Where, runtime.Eq(o, rq.p.ID))
+		}
+	}
+	if ob := vals.Get("order"); ob != "" {
+		if f := strings.Fields(ob); c.Slot(f[0]) != nil {
+			q.OrderBy = ob
+		}
+	}
+	return q, nil
+}
+
+func ownerOf(c *model.Class) string {
+	if c.Access == nil {
+		return ""
+	}
+	return c.Access.Owner
+}
+
 func (a *App) apiList(rq *request) error {
-	q, _, _, err := a.listQuery(rq)
+	q, err := a.apiQuery(rq)
 	if err != nil {
 		return err
 	}
@@ -131,10 +201,11 @@ func (a *App) apiList(rq *request) error {
 	if err != nil {
 		return err
 	}
-	if recs == nil {
-		recs = []*runtime.Record{}
+	data := make([]map[string]any, len(recs))
+	for i, r := range recs {
+		data[i] = r.PublicFor(rq.p)
 	}
-	return writeJSON(rq, http.StatusOK, map[string]any{"data": recs, "total": total, "page": pageNo, "per_page": per})
+	return writeJSON(rq, http.StatusOK, map[string]any{"data": data, "total": total, "page": pageNo, "per_page": per})
 }
 
 func (a *App) apiSave(rq *request, rec *runtime.Record, status int) error {
@@ -167,17 +238,14 @@ func (a *App) apiSave(rq *request, rec *runtime.Record, status int) error {
 	if errs := rec.Assign(in, ownerOf(c)); errs != nil {
 		return &httpError{status: http.StatusUnprocessableEntity, msg: "validation failed", fields: errs}
 	}
-	if err := a.saveChecked(rq, rec); err != nil {
+	if err := a.engine.Save(rq.ctx(), rq.p, rec); err != nil {
 		var fe runtime.FieldErrors
 		if errors.As(err, &fe) {
-			return &httpError{status: http.StatusUnprocessableEntity, msg: generalError(fe), fields: fe}
+			return &httpError{status: http.StatusUnprocessableEntity, msg: ux.GeneralError(fe), fields: fe}
 		}
 		return err
 	}
-	if status == http.StatusCreated {
-		a.logLinkUses(rq.ctx(), rq.p, rec, nil)
-	}
-	return writeJSON(rq, status, rec)
+	return writeJSON(rq, status, rec.PublicFor(rq.p))
 }
 
 func (a *App) apiError(rq *request, err error) {

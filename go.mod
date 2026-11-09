@@ -4,9 +4,8 @@ go 1.26.0
 
 require (
 	github.com/caddyserver/caddy/v2 v2.11.7
-	github.com/dop251/goja v0.0.0-20261014135309-2cb8274eed06
 	github.com/muktihari/fit v0.28.5
-	github.com/timeofmind/data-driven-framework-go v0.15.0
+	github.com/timeofmind/data-driven-framework-go v0.16.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -56,14 +55,12 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.5 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/go-sql-driver/mysql v1.10.1 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/certificate-transparency-go v1.3.3 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/go-tspi v0.3.0 // indirect
-	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 // indirect
 	github.com/google/s2a-go v0.1.10 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.22 // indirect

@@ -1,0 +1,18 @@
+path: /c/routes
+title: Routes
+interface_views:
+  - type: list
+    name: list
+    data: {class: Route}
+    fields: [member_id, name, distance_km, based_on_id]
+    filters:
+      - name: terrain
+        label: Terrain
+        via: terrains
+        include_children: parent_id
+        group_by: region_id
+        collapse_groups: true
+        rank_by_usage: true
+    sort: [name asc]
+    mine: true
+    add: {page: new-route, label: New route}

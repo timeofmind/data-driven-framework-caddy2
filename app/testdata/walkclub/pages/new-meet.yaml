@@ -1,0 +1,7 @@
+path: /c/meets/new
+access: signed_in
+interface_views:
+  - type: form
+    creates: Meet
+    fields: [name, start_date, end_date]
+    cancel: {page: meets}

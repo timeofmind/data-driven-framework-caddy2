@@ -1,0 +1,12 @@
+path: /c/walks/calendar
+title: Walks
+interface_views:
+  - type: text
+    links:
+      - {page: walks, label: List view, style: ghost}
+  - type: calendar
+    show:
+      - {class: Walk, text: "{title + ' · ' + round(distance_km, 1) + ' km'}", drag: true}
+    add:
+      page: new-walk
+      set: {day: day}

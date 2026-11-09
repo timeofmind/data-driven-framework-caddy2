@@ -1,0 +1,9 @@
+path: /c/outings
+title: Outings
+interface_views:
+  - type: list
+    name: list
+    data: {class: Outing}
+    fields: [member_id, route_id, day]
+    mine: true
+    add: {page: new-outing, label: New outing}

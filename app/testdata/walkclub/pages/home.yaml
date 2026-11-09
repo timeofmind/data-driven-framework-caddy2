@@ -1,0 +1,27 @@
+path: /
+title: Walk Club
+label: Home
+interface_views:
+  - type: text
+    style: hero
+    title: Walk Club
+    text: "A fixture application for the datadriven handler's tests."
+    links:
+      - {page: calendar, label: Your calendar, when: "viewer != null"}
+      - {page: upload, label: Upload, when: "viewer != null", style: ghost}
+      - {url: /signup, label: Create an account, when: viewer == null}
+      - {url: /login, label: Sign in, when: viewer == null, style: ghost}
+  - type: list
+    title: Meetups
+    data: {class: Meetup, where: "day >= today", order: day asc, limit: 5}
+    fields: [organizer_id, title, day, open]
+    more: {page: meetups, label: See all}
+  - type: list
+    title: Your walks
+    data: {class: Walk, where: member_id == viewer.id, order: day desc, limit: 5}
+    fields: [member_id, route_id, day, title, kind, distance_km, duration, moving]
+    when: "viewer != null"
+    more:
+      page: walks
+      label: See all
+      set: {mine: "'1'"}

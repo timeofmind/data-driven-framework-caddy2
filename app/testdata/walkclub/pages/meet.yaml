@@ -1,0 +1,18 @@
+path: "/c/meets/{id}"
+record: {class: Meet, id: id}
+default_for: Meet
+interface_views:
+  - type: detail
+    fields: [created_by, start_date, end_date]
+    actions:
+      - edit: {page: edit-meet}
+      - delete:
+          then: {page: meets}
+  - type: list
+    title: Entries
+    data: {of: entries, limit: 50}
+    fields: [member_id]
+    add:
+      page: new-meet-entry
+      label: "I'm going"
+      set: {meet_id: record.id}

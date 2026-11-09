@@ -1,0 +1,7 @@
+path: /c/best-times/new
+access: signed_in
+interface_views:
+  - type: form
+    creates: BestTime
+    fields: [meetup_id, walk_id, time]
+    cancel: {page: best-times}

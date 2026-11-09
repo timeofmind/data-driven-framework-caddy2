@@ -1,0 +1,24 @@
+path: "/c/walks/{id}"
+record: {class: Walk, id: id}
+default_for: Walk
+interface_views:
+  - type: detail
+    fields: [member_id, route_id, day, kind, distance_km, duration, moving, visibility, pace]
+    actions:
+      - edit: {page: edit-walk}
+      - delete:
+          then: {page: walks}
+  - type: list
+    title: Legs
+    data: {of: legs, order: n asc, limit: 50}
+    fields: [n, distance_km, duration]
+    add:
+      page: new-leg
+      set: {walk_id: record.id}
+  - type: list
+    title: Best Times
+    data: {of: best_times, limit: 50}
+    fields: [member_id, meetup_id, time]
+    add:
+      page: new-best-time
+      set: {walk_id: record.id}

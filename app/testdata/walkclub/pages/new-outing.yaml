@@ -1,0 +1,7 @@
+path: /c/outings/new
+access: signed_in
+interface_views:
+  - type: form
+    creates: Outing
+    fields: [route_id, day]
+    cancel: {page: outings}

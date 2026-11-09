@@ -1,0 +1,7 @@
+path: /c/stages/new
+access: signed_in
+interface_views:
+  - type: form
+    creates: Stage
+    fields: [trip_id, km, by, minutes, effort, path]
+    cancel: {page: stages}

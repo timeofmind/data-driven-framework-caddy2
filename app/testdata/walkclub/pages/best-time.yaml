@@ -1,0 +1,10 @@
+path: "/c/best-times/{id}"
+record: {class: BestTime, id: id}
+default_for: BestTime
+interface_views:
+  - type: detail
+    fields: [member_id, meetup_id, walk_id, time]
+    actions:
+      - edit: {page: edit-best-time}
+      - delete:
+          then: {page: best-times}

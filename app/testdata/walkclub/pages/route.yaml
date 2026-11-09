@@ -1,0 +1,35 @@
+path: "/c/routes/{id}"
+record: {class: Route, id: id}
+default_for: Route
+interface_views:
+  - type: detail
+    fields: [member_id, distance_km, last_walked, visibility, based_on_id]
+    actions:
+      - {action: copy, label: Copy route}
+      - edit: {page: edit-route}
+      - delete:
+          then: {page: routes}
+  - type: chips
+    title: Terrain
+    data: {of: terrains}
+  - type: list
+    title: Outings
+    data: {of: outings, limit: 50}
+    fields: [member_id, day]
+    add:
+      page: new-outing
+      set: {route_id: record.id}
+  - type: list
+    title: Routes
+    data: {of: routes, limit: 50}
+    fields: [member_id, name, distance_km]
+    add:
+      page: new-route
+      set: {based_on_id: record.id}
+  - type: list
+    title: Walks
+    data: {of: walks, limit: 50}
+    fields: [member_id, day, title, kind, distance_km, duration, moving]
+    add:
+      page: new-walk
+      set: {route_id: record.id}

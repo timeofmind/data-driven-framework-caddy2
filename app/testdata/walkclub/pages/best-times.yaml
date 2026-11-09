@@ -1,0 +1,9 @@
+path: /c/best-times
+title: Best Times
+interface_views:
+  - type: list
+    name: list
+    data: {class: BestTime}
+    fields: [member_id, meetup_id, walk_id, time]
+    mine: true
+    add: {page: new-best-time, label: New best time}

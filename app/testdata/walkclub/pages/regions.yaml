@@ -1,0 +1,10 @@
+path: /c/regions
+title: Regions
+interface_views:
+  - type: list
+    name: list
+    data: {class: Region}
+    fields: [name]
+    search: [name]
+    mine: true
+    add: {page: new-region, label: New region}

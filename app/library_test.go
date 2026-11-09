@@ -9,9 +9,9 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/runtime"
 )
 
-// TestSharedLibrary covers link: readable, filters (nesting, grouping, all),
-// usage logging from links and copy actions with the search context, and
-// ranking by usage — all declared in the fixture's schema.
+// TestSharedLibrary covers link: readable, chips, filters (nesting, grouping,
+// all), usage logging from links and copy actions with the search context,
+// and ranking by usage — declared in the fixture's model and pages.
 func TestSharedLibrary(t *testing.T) {
 	a, srv := newTestApp(t)
 	ctx := t.Context()
@@ -33,7 +33,11 @@ func TestSharedLibrary(t *testing.T) {
 	route := func(b *browser, name string, terrains ...int64) int64 {
 		id := mustID(b.create("/c/routes/new", url.Values{"name": {name}, "visibility": {"public"}}))
 		for _, tr := range terrains {
-			b.create("/c/route-terrains/new?route_id="+itoa(id), url.Values{"route_id": {itoa(id)}, "terrain_id": {itoa(tr)}})
+			page := "/c/routes/" + itoa(id)
+			code, body, _ := b.post(page, url.Values{"_csrf": {b.csrf("/c/routes/new")}, "_view": {"chips2"}, "_op": {"link"}, "terrain_id": {itoa(tr)}})
+			if code != http.StatusSeeOther {
+				t.Fatalf("add terrain: %d %s", code, extractAlert(body))
+			}
 		}
 		return id
 	}
@@ -84,21 +88,25 @@ func TestSharedLibrary(t *testing.T) {
 		t.Error("q must be ignored when search is off")
 	}
 	got = list(ben, "?terrain="+itoa(sand)+"&terrain="+itoa(forest))
-	if !strings.Contains(got, "/c/routes/"+itoa(dune)+"?terrain=") {
+	if !strings.Contains(got, "/c/routes/"+itoa(dune)+"?_search="+itoa(sand)+"%2C"+itoa(forest)) {
 		t.Error("rows should carry the search into the record link")
 	}
 
 	// The record page passes the search on to its copy action and to "add outing".
-	_, page, _ := ben.get("/c/routes/" + itoa(dune) + "?terrain=" + itoa(forest))
-	if !strings.Contains(page, "/c/routes/"+itoa(dune)+"/copy?_search="+itoa(forest)) {
+	_, page, _ := ben.get("/c/routes/" + itoa(dune) + "?_search=" + itoa(forest))
+	if !strings.Contains(page, "/c/routes/"+itoa(dune)+"?_action=copy&amp;_op=action&amp;_search="+itoa(forest)+"&amp;_view=detail1") {
 		t.Error("copy link should carry _search")
 	}
 	if !strings.Contains(page, "/c/outings/new?route_id="+itoa(dune)+"&amp;_search="+itoa(forest)) {
 		t.Error("add-outing link should carry _search")
 	}
+	if _, confirm, _ := ben.get("/c/routes/" + itoa(dune) + "?_action=copy&_op=action&_search=" + itoa(forest) + "&_view=detail1"); !strings.Contains(confirm, "Copy route “Dune path”?") {
+		t.Error("copy asks first")
+	}
 
 	// Copy: confirm, then a private copy owned by ben with the terrains.
-	code, _, loc := ben.post("/c/routes/"+itoa(dune)+"/copy?_search="+itoa(forest), url.Values{})
+	code, _, loc := ben.post("/c/routes/"+itoa(dune), url.Values{"_csrf": {ben.csrf("/c/routes/new")}, "_view": {"detail1"}, "_op": {"action"},
+		"_action": {"copy"}, "_search": {itoa(forest)}})
 	if code != http.StatusSeeOther {
 		t.Fatalf("copy: %d", code)
 	}
@@ -129,8 +137,8 @@ func TestSharedLibrary(t *testing.T) {
 	if n, _ := a.Reg.MustClass("RouteUseTerrain").Count(ctx, runtime.Query{}); n != 3 {
 		t.Errorf("searched terrains logged: %d", n)
 	}
-	if code, _, _ := ben.get("/c/route-uses/new"); code != http.StatusForbidden {
-		t.Errorf("usage log must not be creatable by hand: %d", code)
+	if code, _, _ := ben.get("/c/route-uses/new"); code != http.StatusNotFound {
+		t.Errorf("the usage log has no pages: %d", code)
 	}
 
 	// Ranking (anonymous visitor): for Forest, Dune path (2 people) beats Woods walk (1).

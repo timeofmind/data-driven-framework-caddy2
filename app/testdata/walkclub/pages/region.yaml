@@ -1,0 +1,16 @@
+path: "/c/regions/{id}"
+record: {class: Region, id: id}
+default_for: Region
+interface_views:
+  - type: detail
+    actions:
+      - edit: {page: edit-region}
+      - delete:
+          then: {page: regions}
+  - type: list
+    title: Terrains
+    data: {of: terrains, limit: 50}
+    fields: [parent_id, name]
+    add:
+      page: new-terrain
+      set: {region_id: record.id}

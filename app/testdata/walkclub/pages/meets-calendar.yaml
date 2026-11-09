@@ -1,0 +1,12 @@
+path: /c/meets/calendar
+title: Meets
+interface_views:
+  - type: text
+    links:
+      - {page: meets, label: List view, style: ghost}
+  - type: calendar
+    show:
+      - {class: Meet, drag: true}
+    add:
+      page: new-meet
+      set: {start_date: day}

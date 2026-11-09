@@ -1,0 +1,8 @@
+path: "/c/meets/{id}/edit"
+title: "Edit {record._title}"
+access: signed_in
+record: {class: Meet, id: id}
+interface_views:
+  - type: form
+    edits: record
+    fields: [name, start_date, end_date]

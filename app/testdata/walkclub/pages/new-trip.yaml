@@ -1,0 +1,11 @@
+path: /c/trips/new
+access: signed_in
+interface_views:
+  - type: form
+    creates: Trip
+    fields:
+      - name
+      - mode
+      - path
+      - {field: kit_id, placeholder: No kit}
+    cancel: {page: trips}

@@ -1,0 +1,8 @@
+path: "/c/best-times/{id}/edit"
+title: "Edit {record._title}"
+access: signed_in
+record: {class: BestTime, id: id}
+interface_views:
+  - type: form
+    edits: record
+    fields: [meetup_id, walk_id, time]

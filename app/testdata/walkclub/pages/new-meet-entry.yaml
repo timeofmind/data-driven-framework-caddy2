@@ -1,0 +1,7 @@
+path: /c/meet-entries/new
+access: signed_in
+interface_views:
+  - type: form
+    creates: MeetEntry
+    fields: [meet_id]
+    cancel: {page: meet-entries}

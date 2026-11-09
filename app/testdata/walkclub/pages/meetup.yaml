@@ -1,0 +1,26 @@
+path: "/c/meetups/{id}"
+record: {class: Meetup, id: id}
+default_for: Meetup
+interface_views:
+  - type: detail
+    fields: [organizer_id, day, open]
+    actions:
+      - edit: {page: edit-meetup}
+      - delete:
+          then: {page: meetups}
+  - type: list
+    title: Best times
+    data: {of: times, order: time asc, limit: 1000}
+    fields: [member_id, walk_id, time]
+    rank: {best_per: member_id}
+    add:
+      page: new-best-time
+      set: {meetup_id: record.id}
+  - type: list
+    title: Attending
+    data: {of: attendees, limit: 50}
+    fields: [member_id, note]
+    add:
+      page: new-attendance
+      label: Attend
+      set: {meetup_id: record.id}

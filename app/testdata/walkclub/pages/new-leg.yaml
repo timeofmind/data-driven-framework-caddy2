@@ -1,0 +1,7 @@
+path: /c/legs/new
+access: signed_in
+interface_views:
+  - type: form
+    creates: Leg
+    fields: [walk_id, n, distance_km, duration]
+    cancel: {page: legs}

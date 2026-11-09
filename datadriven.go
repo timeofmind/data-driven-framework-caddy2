@@ -1,9 +1,8 @@
 // Package datadriven is a Caddy v2 HTTP handler that runs a data-driven
 // application. The handler is app-agnostic: an application is a directory —
-// its app.yaml manifest, its schema (structure, rules and behaviour, in
-// data-driven-framework-go YAML) and its theme (page layout and styling) —
-// and the handler serves pages, forms, calendars, accounts, a JSON API and
-// file uploads from it.
+// its app.yaml manifest, its data model and its page files (both
+// data-driven-framework-go YAML) and its theme — and the handler serves its
+// pages, accounts, a JSON API, calendar feeds and file uploads from it.
 //
 //	example.com {
 //		datadriven {

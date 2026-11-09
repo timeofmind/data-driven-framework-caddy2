@@ -1,0 +1,7 @@
+path: /c/attendances/new
+access: signed_in
+interface_views:
+  - type: form
+    creates: Attendance
+    fields: [meetup_id, note]
+    cancel: {page: attendances}

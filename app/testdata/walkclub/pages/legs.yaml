@@ -1,0 +1,8 @@
+path: /c/legs
+title: Legs
+interface_views:
+  - type: list
+    name: list
+    data: {class: Leg}
+    fields: [walk_id, n, distance_km, duration]
+    add: {page: new-leg, label: New leg}

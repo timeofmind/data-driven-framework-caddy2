@@ -1,0 +1,7 @@
+path: /c/regions/new
+access: signed_in
+interface_views:
+  - type: form
+    creates: Region
+    fields: [name]
+    cancel: {page: regions}

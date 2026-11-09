@@ -1,0 +1,29 @@
+path: /calendar
+title: Your calendar
+label: Calendar
+access: signed_in
+interface_views:
+  - type: calendar
+    show:
+      - class: Meetup
+        where: organizer_id == viewer.id
+        legend:
+          page: meetups
+          set: {mine: "'1'"}
+      - class: Walk
+        where: member_id == viewer.id
+        text: "{title + ' · ' + round(distance_km, 1) + ' km'}"
+        drag: true
+        legend:
+          page: walks
+          set: {mine: "'1'"}
+      - class: MeetEntry
+        where: member_id == viewer.id
+        text: "{meet.name + ' (entered)'}"
+        legend:
+          page: meet-entries
+          set: {mine: "'1'"}
+    add:
+      page: new-meetup
+      set: {day: day}
+    feed: true

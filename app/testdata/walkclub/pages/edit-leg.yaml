@@ -1,0 +1,8 @@
+path: "/c/legs/{id}/edit"
+title: "Edit {record._title}"
+access: signed_in
+record: {class: Leg, id: id}
+interface_views:
+  - type: form
+    edits: record
+    fields: [walk_id, n, distance_km, duration]

@@ -1,0 +1,20 @@
+path: "/c/terrains/{id}"
+record: {class: Terrain, id: id}
+default_for: Terrain
+interface_views:
+  - type: detail
+    fields: [region_id, parent_id]
+    actions:
+      - edit: {page: edit-terrain}
+      - delete:
+          then: {page: terrains}
+  - type: chips
+    title: Route Terrains
+    data: {of: route_terrains}
+  - type: list
+    title: Terrains
+    data: {of: terrains, limit: 50}
+    fields: [region_id, name]
+    add:
+      page: new-terrain
+      set: {parent_id: record.id}

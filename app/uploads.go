@@ -16,9 +16,11 @@ import (
 	"github.com/timeofmind/data-driven-framework-caddy2/importer"
 	"github.com/timeofmind/data-driven-framework-go/model"
 	"github.com/timeofmind/data-driven-framework-go/runtime"
+	"github.com/timeofmind/data-driven-framework-go/ux"
+	webux "github.com/timeofmind/data-driven-framework-go/web-ux"
 )
 
-// Uploads turn files into records of the manifest's upload class. The file
+// Uploads turn files into records of the class of the app's upload view. The file
 // readers (package importer) produce device-neutral fields; what happens to
 // them — which slots they fill, what gets linked or created — is entirely the
 // class's import block in the app's schema.
@@ -53,32 +55,40 @@ func acceptedFormats(c *model.Class) []string {
 	return out
 }
 
-func (a *App) uploadPage(rq *request) error {
-	if err := a.requireLogin(rq); err != nil {
-		return err
+// uploadView reads the files posted to an upload view (web-ux calls it).
+func (a *App) uploadView(wr *webux.Request, c *model.Class) (any, error) {
+	if a.uploads == nil || c.Name != a.uploads.Class.Name {
+		return nil, errNotFound
 	}
-	if !runtime.CanCreate(a.uploads.Class, rq.p) {
-		return errForbidden
+	rq := &request{app: a, w: wr.W, r: wr.R, p: wr.Viewer, csrf: wr.CSRF}
+	if !runtime.CanCreate(c, rq.p) {
+		return nil, errForbidden
 	}
-	var results []uploadResult
-	if rq.r.Method == http.MethodPost {
-		var err error
-		if results, err = a.handleUpload(rq); err != nil {
-			return err
-		}
+	results, err := a.handleUpload(rq)
+	if he, ok := err.(*httpError); ok {
+		return nil, &ux.Error{Status: he.status, Message: he.msg}
 	}
-	u := a.man.Uploads
-	formats := acceptedFormats(a.uploads.Class)
+	return results, err
+}
+
+// uploadInfo is what an upload view accepts.
+func (a *App) uploadInfo(c *model.Class) webux.UploadInfo {
+	formats := acceptedFormats(c)
 	accept := make([]string, len(formats))
 	for i, f := range formats {
 		accept[i] = "." + f
 	}
-	a.render(rq, "upload", firstNonEmpty(u.Title, "Upload"), map[string]any{
-		"Title": firstNonEmpty(u.Title, "Upload"), "Intro": u.Intro, "Help": u.Help,
-		"Results": results, "Formats": formats, "Accept": strings.Join(accept, ","),
-		"MaxMB": a.cfg.MaxUploadBytes >> 20, "MaxFiles": maxFilesPerUpload,
-	})
-	return nil
+	return webux.UploadInfo{Formats: formats, Accept: strings.Join(accept, ","), MaxMB: a.cfg.MaxUploadBytes >> 20, MaxFiles: maxFilesPerUpload}
+}
+
+// link is a labelled URL in upload results.
+type link struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
+}
+
+func (a *App) recordURL(c *model.Class, id int64) string {
+	return a.Pages.RecordURL(a.cfg.BasePath, c.Name, id)
 }
 
 // handleUpload reads multipart "files" and imports each one. CSRF has already
@@ -251,11 +261,11 @@ func importSource(act *importer.Activity, file, hash string, tz *time.Location) 
 	return runtime.ImportSource{Fields: f, Children: map[string][]map[string]any{"laps": laps}}
 }
 
-// recordSummary is the record's calendar text plus its computed values.
+// recordSummary is the record's date plus its computed values.
 func recordSummary(r *runtime.Record) string {
 	parts := []string{}
-	if c := r.Class.Calendar; c != "" && r.String(c) != "" {
-		parts = append(parts, r.String(c)[:min(10, len(r.String(c)))])
+	if o := r.Class.Occurs; o != nil && o.Own() && r.String(o.From) != "" {
+		parts = append(parts, r.String(o.From)[:min(10, len(r.String(o.From)))])
 	}
 	for _, cv := range runtime.Computed(r) {
 		parts = append(parts, cv.Text)

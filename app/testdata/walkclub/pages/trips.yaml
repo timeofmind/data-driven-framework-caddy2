@@ -1,0 +1,10 @@
+path: /c/trips
+title: Trips
+interface_views:
+  - type: list
+    name: list
+    data: {class: Trip}
+    fields: [member_id, name, mode, path, kit_id]
+    search: [name]
+    mine: true
+    add: {page: new-trip, label: New trip}

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,93 +10,79 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Manifest is an application's app.yaml: everything about the app that is not
-// data structure (which lives in its schema files) or styling (its theme).
+// Manifest is an application's app.yaml: where its data model, pages and
+// theme are, and the few settings that belong to neither.
 //
 //	name: "My App"
-//	tagline: "One line under the name on the home page"
-//	schema: [schema/*.yaml]          # globs, relative to the app directory
-//	theme: theme                     # layout.html, page templates, static/ (default "theme")
-//	timezone: America/Vancouver      # default for imports
+//	tagline: "One line under the name"
+//	model: [model/*.yaml]            # the data model (globs, relative to the app directory)
+//	pages: [pages/*.yaml]            # pages and their interface views (default)
+//	theme: theme                     # templates and static/ (default "theme")
+//	timezone: America/Vancouver      # "today", and the default for imports
 //	signup: {enabled: true, intro: "Shown above the sign-up form"}
-//	nav: [Meetup, Walk]              # top navigation (default: every top-level class)
-//	home:
-//	  - {class: Meetup, title: "Upcoming meetups"}
-//	  - {class: Walk, mine: true, title: "Your recent walks"}
-//	uploads:
-//	  class: Walk                    # a class with an import block
-//	  title: "Upload GPS files"
-//	  intro: "…"
-//	  help: ["…", "…"]
+//	nav: [calendar, walks, routes]   # page names in the main navigation
 type Manifest struct {
 	Name     string   `yaml:"name"`
 	Tagline  string   `yaml:"tagline"`
-	Schema   []string `yaml:"schema"`
+	Model    []string `yaml:"model"`
+	Pages    []string `yaml:"pages"`
 	Theme    string   `yaml:"theme"`
 	Timezone string   `yaml:"timezone"`
 	Signup   struct {
 		Enabled *bool  `yaml:"enabled"`
 		Intro   string `yaml:"intro"`
 	} `yaml:"signup"`
-	Nav     []string      `yaml:"nav"`
-	Home    []HomeSection `yaml:"home"`
-	Uploads *Uploads      `yaml:"uploads"`
+	Nav []string `yaml:"nav"`
 
 	dir string
 }
 
-// HomeSection is one list on the home page.
-type HomeSection struct {
-	Class string `yaml:"class"`
-	Title string `yaml:"title"`
-	Mine  bool   `yaml:"mine"`  // only the signed-in person's rows (skipped when signed out)
-	Limit int    `yaml:"limit"` // default 5
-}
-
-// Uploads configures the upload page.
-type Uploads struct {
-	Class string   `yaml:"class"`
-	Title string   `yaml:"title"`
-	Intro string   `yaml:"intro"`
-	Help  []string `yaml:"help"`
-}
-
-// LoadManifest reads <dir>/app.yaml and resolves its schema globs.
+// LoadManifest reads <dir>/app.yaml. Unknown keys are errors.
 func LoadManifest(dir string) (*Manifest, error) {
 	b, err := os.ReadFile(filepath.Join(dir, "app.yaml"))
 	if err != nil {
 		return nil, fmt.Errorf("app: %w", err)
 	}
 	var m Manifest
-	if err := yaml.Unmarshal(b, &m); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	if err := dec.Decode(&m); err != nil {
 		return nil, fmt.Errorf("app.yaml: %w", err)
 	}
 	m.dir = dir
 	if m.Theme == "" {
 		m.Theme = "theme"
 	}
-	if len(m.Schema) == 0 {
-		m.Schema = []string{"schema/*.yaml"}
+	if len(m.Model) == 0 {
+		m.Model = []string{"model/*.yaml"}
+	}
+	if len(m.Pages) == 0 {
+		m.Pages = []string{"pages/*.yaml"}
 	}
 	return &m, nil
 }
 
-// SchemaFiles expands the schema globs (sorted within each glob).
-func (m *Manifest) SchemaFiles() ([]string, error) {
+func (m *Manifest) files(what string, globs []string) ([]string, error) {
 	var out []string
-	for _, g := range m.Schema {
+	for _, g := range globs {
 		matches, err := filepath.Glob(filepath.Join(m.dir, g))
 		if err != nil {
-			return nil, fmt.Errorf("app.yaml schema %q: %w", g, err)
+			return nil, fmt.Errorf("app.yaml %s %q: %w", what, g, err)
 		}
 		sort.Strings(matches)
 		if len(matches) == 0 {
-			return nil, fmt.Errorf("app.yaml schema %q matches no files", g)
+			return nil, fmt.Errorf("app.yaml %s %q matches no files", what, g)
 		}
 		out = append(out, matches...)
 	}
 	return out, nil
 }
+
+// ModelFiles expands the model globs (sorted within each glob).
+func (m *Manifest) ModelFiles() ([]string, error) { return m.files("model", m.Model) }
+
+// PageFiles expands the pages globs.
+func (m *Manifest) PageFiles() ([]string, error) { return m.files("pages", m.Pages) }
 
 // ThemeDir is the absolute theme directory ("" if it does not exist).
 func (m *Manifest) ThemeDir() string {

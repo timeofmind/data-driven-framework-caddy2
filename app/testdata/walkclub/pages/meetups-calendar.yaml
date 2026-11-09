@@ -1,0 +1,12 @@
+path: /c/meetups/calendar
+title: Meetups
+interface_views:
+  - type: text
+    links:
+      - {page: meetups, label: List view, style: ghost}
+  - type: calendar
+    show:
+      - {class: Meetup}
+    add:
+      page: new-meetup
+      set: {day: day}

@@ -1,0 +1,10 @@
+path: /c/attendances
+title: Attendances
+interface_views:
+  - type: list
+    name: list
+    data: {class: Attendance}
+    fields: [member_id, meetup_id, note]
+    search: [note]
+    mine: true
+    add: {page: new-attendance, label: New attendance}

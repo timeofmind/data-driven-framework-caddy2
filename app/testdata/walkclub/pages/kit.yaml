@@ -1,0 +1,13 @@
+path: "/c/kits/{id}"
+record: {class: Kit, id: id}
+default_for: Kit
+interface_views:
+  - type: detail
+    fields: [mode]
+  - type: list
+    title: Trips
+    data: {of: trips, limit: 50}
+    fields: [member_id, name, mode, path]
+    add:
+      page: new-trip
+      set: {kit_id: record.id}

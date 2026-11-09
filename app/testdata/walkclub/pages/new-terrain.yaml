@@ -1,0 +1,7 @@
+path: /c/terrains/new
+access: signed_in
+interface_views:
+  - type: form
+    creates: Terrain
+    fields: [region_id, parent_id, name]
+    cancel: {page: terrains}

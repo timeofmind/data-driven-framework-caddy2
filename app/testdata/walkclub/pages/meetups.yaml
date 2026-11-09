@@ -1,0 +1,13 @@
+path: /c/meetups
+title: Meetups
+interface_views:
+  - type: text
+    links:
+      - {page: meetups-calendar, label: Calendar view, style: ghost}
+  - type: list
+    name: list
+    data: {class: Meetup}
+    fields: [organizer_id, title, day, open]
+    search: [title]
+    mine: true
+    add: {page: new-meetup, label: New meetup}

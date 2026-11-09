@@ -1,0 +1,10 @@
+path: "/c/legs/{id}"
+record: {class: Leg, id: id}
+default_for: Leg
+interface_views:
+  - type: detail
+    fields: [walk_id, n, distance_km, duration]
+    actions:
+      - edit: {page: edit-leg}
+      - delete:
+          then: {page: legs}

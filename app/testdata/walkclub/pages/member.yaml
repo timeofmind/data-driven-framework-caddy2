@@ -1,0 +1,46 @@
+path: "/c/members/{id}"
+record: {class: Member, id: id}
+default_for: Member
+interface_views:
+  - type: detail
+    fields: [tz]
+    actions:
+      - edit: {page: edit-member, label: Edit profile}
+      - delete:
+          then: {url: /}
+  - type: list
+    title: Attendances
+    data: {of: attendances, limit: 50}
+    fields: [meetup_id, note]
+  - type: list
+    title: Best Times
+    data: {of: best_times, limit: 50}
+    fields: [meetup_id, walk_id, time]
+  - type: list
+    title: Meets
+    data: {of: meets, limit: 50}
+    fields: [name, start_date, end_date]
+  - type: list
+    title: Meet Entrys
+    data: {of: meet_entrys, limit: 50}
+    fields: [meet_id]
+  - type: list
+    title: Meetups
+    data: {of: meetups, limit: 50}
+    fields: [title, day, open]
+  - type: list
+    title: Outings
+    data: {of: outings, limit: 50}
+    fields: [route_id, day]
+  - type: list
+    title: Routes
+    data: {of: routes, limit: 50}
+    fields: [name, distance_km, based_on_id]
+  - type: list
+    title: Trips
+    data: {of: trips, limit: 50}
+    fields: [name, mode, path, kit_id]
+  - type: list
+    title: Walks
+    data: {of: walks, limit: 50}
+    fields: [route_id, day, title, kind, distance_km, duration, moving]

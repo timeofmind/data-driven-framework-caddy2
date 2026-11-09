@@ -1,0 +1,12 @@
+path: /c/meet-entries
+title: Meet Entries
+interface_views:
+  - type: text
+    links:
+      - {page: meet-entries-calendar, label: Calendar view, style: ghost}
+  - type: list
+    name: list
+    data: {class: MeetEntry}
+    fields: [member_id, meet_id]
+    mine: true
+    add: {page: new-meet-entry, label: New meet entry}

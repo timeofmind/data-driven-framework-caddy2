@@ -1,0 +1,9 @@
+path: /c/meet-entries/calendar
+title: Meet Entries
+interface_views:
+  - type: text
+    links:
+      - {page: meet-entries, label: List view, style: ghost}
+  - type: calendar
+    show:
+      - {class: MeetEntry, text: "{meet.name + ' (entered)'}"}

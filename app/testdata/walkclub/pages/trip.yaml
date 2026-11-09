@@ -1,0 +1,17 @@
+path: "/c/trips/{id}"
+record: {class: Trip, id: id}
+default_for: Trip
+interface_views:
+  - type: detail
+    fields: [member_id, mode, path, kit_id]
+    actions:
+      - edit: {page: edit-trip}
+      - delete:
+          then: {page: trips}
+  - type: list
+    data: {of: stages, limit: 50}
+    fields: [n, km, by, minutes, effort, path]
+    reorder: {field: n, with: drag}
+    add:
+      page: new-stage
+      set: {trip_id: record.id}

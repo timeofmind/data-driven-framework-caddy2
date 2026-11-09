@@ -30,7 +30,7 @@ import (
 )
 
 // The tests run the handler against testdata/walkclub, a small fixture app
-// (app.yaml + schema + theme). Nothing here knows about any real application.
+// (app.yaml + model + pages + theme). Nothing here knows about any real application.
 const fixtureApp = "testdata/walkclub"
 
 func newTestApp(t *testing.T) (*App, *httptest.Server) {
@@ -92,10 +92,22 @@ func (b *browser) csrf(path string) string {
 	return m[1]
 }
 
+var viewRE = regexp.MustCompile(`name="_view" value="([^"]+)"`)
+
+// post submits form to path. Without _csrf (and _view) it takes them from
+// the page at path first: its token, and the view of its first form.
 func (b *browser) post(path string, form url.Values) (int, string, string) {
 	b.t.Helper()
 	if form.Get("_csrf") == "" {
-		form.Set("_csrf", b.csrf(path))
+		_, body, _ := b.get(path)
+		m := csrfRE.FindStringSubmatch(body)
+		if m == nil {
+			b.t.Fatalf("no CSRF token on %s:\n%s", path, body)
+		}
+		form.Set("_csrf", m[1])
+		if v := viewRE.FindStringSubmatch(body); v != nil && form.Get("_view") == "" && path != "/signup" && path != "/login" && path != "/logout" {
+			form.Set("_view", v[1])
+		}
 	}
 	resp, err := b.c.PostForm(b.base+path, form)
 	if err != nil {
@@ -129,6 +141,8 @@ func (b *browser) upload(files map[string][]byte) string {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	mw.WriteField("_csrf", b.csrf("/upload"))
+	mw.WriteField("_view", "upload1")
+	mw.WriteField("_op", "upload")
 	for name, data := range files {
 		fw, _ := mw.CreateFormFile("files", name)
 		fw.Write(data)
@@ -199,7 +213,7 @@ func TestAccountsAccessAndForms(t *testing.T) {
 	if code, _, _ := ben.get(public + "/edit"); code != 403 {
 		t.Errorf("ben edits ann's public row: %d", code)
 	}
-	if code, _, _ := ben.post(public+"/delete", url.Values{"_csrf": {ben.csrf("/c/routes/new")}}); code != 403 {
+	if code, _, _ := ben.post(public, url.Values{"_csrf": {ben.csrf("/c/routes/new")}, "_view": {"detail1"}, "_op": {"delete"}}); code != 403 {
 		t.Errorf("ben deletes ann's row: %d", code)
 	}
 	code, body, _ = ben.post("/c/walks/new", url.Values{"route_id": {idOf(private)}, "day": {"2026-11-05"}, "title": {"x"}})
@@ -210,7 +224,7 @@ func TestAccountsAccessAndForms(t *testing.T) {
 	if code != 200 || !strings.Contains(body, "must be one of your own") {
 		t.Errorf("linked to someone else's row: %d %s", code, extractAlert(body))
 	}
-	resp, _ := ben.c.PostForm(srv.URL+"/c/routes/new", url.Values{"name": {"x"}})
+	resp, _ := ben.c.PostForm(srv.URL+"/c/routes/new", url.Values{"name": {"x"}, "_view": {"form1"}})
 	if resp.StatusCode != 403 {
 		t.Errorf("missing CSRF accepted: %d", resp.StatusCode)
 	}
@@ -259,11 +273,13 @@ func TestThemeAndManifest(t *testing.T) {
 
 	// An app without a theme falls back to the built-in default.
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "schema"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "model"), 0o755)
+	os.MkdirAll(filepath.Join(dir, "pages"), 0o755)
 	for _, f := range []string{"club.yaml", "library.yaml", "rules.yaml"} {
-		src, _ := os.ReadFile(filepath.Join(fixtureApp, "schema", f))
-		os.WriteFile(filepath.Join(dir, "schema", f), src, 0o644)
+		src, _ := os.ReadFile(filepath.Join(fixtureApp, "model", f))
+		os.WriteFile(filepath.Join(dir, "model", f), src, 0o644)
 	}
+	os.WriteFile(filepath.Join(dir, "pages", "home.yaml"), []byte("path: /\ntitle: Bare home\ninterface_views:\n  - {type: text, text: Hello}\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "app.yaml"), []byte("name: Bare\n"), 0o644)
 	_, srv2 := newTestAppAt(t, dir)
 	b2 := newBrowser(t, srv2)
@@ -440,10 +456,10 @@ func TestDeleteAccountCascades(t *testing.T) {
 	b := newBrowser(t, srv)
 	me := b.signup("gone@example.com", "Gone")
 	b.create("/c/routes/new", url.Values{"name": {"x"}})
-	if _, body, _ := b.get(me + "/delete"); !strings.Contains(body, "Delete your account?") {
+	if _, body, _ := b.get(me + "?_view=detail1&_op=delete"); !strings.Contains(body, "Delete your account?") {
 		t.Fatal("no account-deletion confirmation")
 	}
-	if code, _, _ := b.post(me+"/delete", url.Values{}); code != 303 {
+	if code, _, _ := b.post(me, url.Values{"_csrf": {b.csrf("/c/routes/new")}, "_view": {"detail1"}, "_op": {"delete"}}); code != 303 {
 		t.Fatalf("delete account: %d", code)
 	}
 	if n, _ := a.Reg.MustClass("Route").Count(context.Background(), runtime.Query{}); n != 0 {

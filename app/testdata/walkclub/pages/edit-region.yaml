@@ -1,0 +1,8 @@
+path: "/c/regions/{id}/edit"
+title: "Edit {record._title}"
+access: signed_in
+record: {class: Region, id: id}
+interface_views:
+  - type: form
+    edits: record
+    fields: [name]

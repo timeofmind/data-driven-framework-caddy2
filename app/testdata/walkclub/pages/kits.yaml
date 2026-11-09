@@ -1,0 +1,8 @@
+path: /c/kits
+title: Kits
+interface_views:
+  - type: list
+    name: list
+    data: {class: Kit}
+    fields: [name, mode]
+    search: [name]

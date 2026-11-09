@@ -1,0 +1,11 @@
+path: "/c/stages/{id}"
+record: {class: Stage, id: id}
+default_for: Stage
+interface_views:
+  - type: detail
+    fields: [trip_id, n, km, by, minutes, effort, path]
+    actions:
+      - edit: {page: edit-stage}
+      - delete:
+          then: {page: stages}
+      - move_to_position
