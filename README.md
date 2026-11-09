@@ -79,6 +79,10 @@ From that directory the handler serves:
 The schema language (including behaviour and imports) is documented in
 [data-driven-framework-go](https://github.com/timeofmind/data-driven-framework-go).
 
+A proposed split of the interface out of the schema, into page files with
+components (lists, calendars, forms, pickers), is in
+[docs/interface-model.md](docs/interface-model.md).
+
 ## Build
 
 ```sh
