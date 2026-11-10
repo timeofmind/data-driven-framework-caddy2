@@ -167,6 +167,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 //
 //	datadriven [<base_path>] {
 //		app <directory>
+//		base_path <path>
 //		database <mysql|sqlite> <dsn>
 //		database_file <mysql|sqlite> <path-to-file-holding-dsn>
 //		admin <login...>
@@ -189,6 +190,12 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		switch d.Val() {
 		case "app":
 			if !d.AllArgs(&h.App) {
+				return d.ArgErr()
+			}
+		case "base_path":
+			// The mount point: paths outside it are left to the next handler.
+			// (A leading /path argument would be taken by Caddy as a matcher.)
+			if !d.AllArgs(&h.BasePath) {
 				return d.ArgErr()
 			}
 		case "database", "database_file":
