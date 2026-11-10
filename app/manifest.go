@@ -17,6 +17,7 @@ import (
 //	tagline: "One line under the name"
 //	model: [model/*.yaml]            # the data model (globs, relative to the app directory)
 //	pages: [pages/*.yaml]            # pages and their interface views (default)
+//	routing: [routing/*.yaml]        # listeners and routes (default; optional)
 //	theme: theme                     # templates and static/ (default "theme")
 //	timezone: America/Vancouver      # "today", and the default for imports
 //	signup: {enabled: true, intro: "Shown above the sign-up form"}
@@ -26,6 +27,7 @@ type Manifest struct {
 	Tagline  string   `yaml:"tagline"`
 	Model    []string `yaml:"model"`
 	Pages    []string `yaml:"pages"`
+	Routing  []string `yaml:"routing"`
 	Theme    string   `yaml:"theme"`
 	Timezone string   `yaml:"timezone"`
 	Signup   struct {
@@ -59,7 +61,22 @@ func LoadManifest(dir string) (*Manifest, error) {
 	if len(m.Pages) == 0 {
 		m.Pages = []string{"pages/*.yaml"}
 	}
+	if len(m.Routing) == 0 {
+		m.Routing = []string{"routing/*.yaml"}
+	}
 	return &m, nil
+}
+
+// RoutingFiles expands the routing globs; none is fine (the app then uses
+// the one listener the server configures).
+func (m *Manifest) RoutingFiles() []string {
+	var out []string
+	for _, g := range m.Routing {
+		matches, _ := filepath.Glob(filepath.Join(m.dir, g))
+		sort.Strings(matches)
+		out = append(out, matches...)
+	}
+	return out
 }
 
 func (m *Manifest) files(what string, globs []string) ([]string, error) {

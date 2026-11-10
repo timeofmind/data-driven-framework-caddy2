@@ -23,7 +23,10 @@ import (
 	"time"
 
 	"github.com/timeofmind/data-driven-framework-go/generator"
+	"github.com/timeofmind/data-driven-framework-go/listener"
+	_ "github.com/timeofmind/data-driven-framework-go/listener/sql"
 	"github.com/timeofmind/data-driven-framework-go/model"
+	"github.com/timeofmind/data-driven-framework-go/routing"
 	"github.com/timeofmind/data-driven-framework-go/runtime"
 	"github.com/timeofmind/data-driven-framework-go/schema"
 	"github.com/timeofmind/data-driven-framework-go/ux"
@@ -116,24 +119,29 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	reg, err := runtime.Open(m, cfg.Driver, cfg.DSN)
+	reg, err := openRegistry(m, man, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("datadriven: database: %w", err)
 	}
 	reg.Location = loc // "today" in the model's rules
-	res, err := reg.EnsureSchema(ctx)
-	if err != nil {
-		reg.Close()
-		return nil, fmt.Errorf("datadriven: schema: %w", err)
-	}
-	for _, t := range res.CreatedTables {
-		cfg.Logger.Info("created table", "table", t)
-	}
-	for _, c := range res.AddedColumns {
-		cfg.Logger.Info("added column", "column", c)
-	}
-	for _, p := range res.Pending {
-		cfg.Logger.Warn("schema difference needs a manual migration", "detail", p)
+	for name, l := range reg.Listeners {
+		if !l.Caps().Schema {
+			continue
+		}
+		res, err := l.Prepare(ctx, m, listener.PrepareOptions{})
+		if err != nil {
+			reg.Close()
+			return nil, fmt.Errorf("datadriven: schema (%s): %w", name, err)
+		}
+		for _, t := range res.Created {
+			cfg.Logger.Info("created table", "listener", name, "table", t)
+		}
+		for _, c := range res.Added {
+			cfg.Logger.Info("added column", "listener", name, "column", c)
+		}
+		for _, p := range res.Pending {
+			cfg.Logger.Warn("schema difference needs a manual migration", "listener", name, "detail", p)
+		}
 	}
 	a := &App{cfg: cfg, man: man, Model: m, Reg: reg, Pages: pages, bySlug: map[string]*runtime.Handle{},
 		limiter: newLimiter(), log: cfg.Logger, admins: map[string]bool{}, loc: loc}
@@ -183,6 +191,20 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return fail(err)
 	}
 	return a, nil
+}
+
+// openRegistry binds the model to the app's routing files, or, without any,
+// to the one database the server configures.
+func openRegistry(m *model.Model, man *Manifest, cfg Config) (*runtime.Registry, error) {
+	files := man.RoutingFiles()
+	if len(files) == 0 {
+		return runtime.Open(m, cfg.Driver, cfg.DSN)
+	}
+	rt, err := routing.Load(files...)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.OpenRouted(m, rt)
 }
 
 // Close releases the database.
