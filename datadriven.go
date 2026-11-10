@@ -54,6 +54,11 @@ type Handler struct {
 	// UploadDir keeps original uploaded files; MaxUploadBytes limits each file.
 	UploadDir      string `json:"upload_dir,omitempty"`
 	MaxUploadBytes int64  `json:"max_upload_bytes,omitempty"`
+	// TokenKeyFile holds the key that signs fetch tokens (hex or raw; the
+	// same file on every node of a cluster).
+	TokenKeyFile string `json:"token_key_file,omitempty"`
+	// View switches the data view layer off ("off").
+	View string `json:"view,omitempty"`
 
 	app *app.App
 }
@@ -76,7 +81,17 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		}
 		dsn = strings.TrimSpace(string(b))
 	}
+	var key []byte
+	if h.TokenKeyFile != "" {
+		b, err := os.ReadFile(h.TokenKeyFile)
+		if err != nil {
+			return fmt.Errorf("datadriven: token_key_file: %w", err)
+		}
+		key = []byte(strings.TrimSpace(string(b)))
+	}
 	cfg := app.Config{
+		TokenKey:       key,
+		NoView:         h.View == "off",
 		AppDir:         h.App,
 		Driver:         h.Driver,
 		DSN:            caddy.NewReplacer().ReplaceKnown(dsn, ""),
@@ -141,6 +156,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 //		secure_cookies on|off
 //		session_ttl <duration>
 //		uploads <dir> [<max size per file, e.g. 25MB>]
+//		token_key_file <path>
+//		view on|off
 //	}
 func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // directive name
@@ -184,6 +201,18 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.Errf("session_ttl: %v", err)
 			}
 			h.SessionTTL = caddy.Duration(dur)
+		case "token_key_file":
+			if !d.AllArgs(&h.TokenKeyFile) {
+				return d.ArgErr()
+			}
+		case "view":
+			if !d.NextArg() {
+				return d.ArgErr()
+			}
+			if d.Val() != "on" && d.Val() != "off" {
+				return d.Errf("view: expected on or off, got %q", d.Val())
+			}
+			h.View = d.Val()
 		case "uploads":
 			args := d.RemainingArgs()
 			if len(args) < 1 || len(args) > 2 {

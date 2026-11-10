@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -59,6 +60,20 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 			return err
 		}
 		return writeJSON(rq, http.StatusOK, map[string]any{"results": results})
+	case parts[0] == "_stats":
+		if rq.p == nil || !rq.p.Admin {
+			return errForbidden
+		}
+		return writeJSON(rq, http.StatusOK, a.stats())
+	case parts[0] == "_cache" && m == http.MethodDelete:
+		if rq.p == nil || !rq.p.Admin {
+			return errForbidden
+		}
+		if a.Reg.View != nil {
+			a.Reg.View.Clear()
+		}
+		rq.w.WriteHeader(http.StatusNoContent)
+		return nil
 	case len(parts) >= 1:
 		h, ok := a.bySlug[parts[0]]
 		if !ok {
@@ -85,10 +100,20 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 		}
 		switch m {
 		case http.MethodGet:
+			if rec.Version != 0 {
+				rq.w.Header().Set("ETag", fmt.Sprintf("\"%d\"", rec.Version))
+			}
 			return writeJSON(rq, http.StatusOK, rec.PublicFor(rq.p))
 		case http.MethodPut, http.MethodPatch:
 			if ok, _ := a.Reg.Writable(rq.ctx(), rec, rq.p); !ok {
 				return errForbidden
+			}
+			// If-Match: the version the client read; a field changed since
+			// by someone else is a conflict.
+			if im := strings.Trim(rq.r.Header.Get("If-Match"), "\" "); im != "" {
+				if v, err := strconv.ParseInt(im, 10, 64); err == nil {
+					rec.Version = v
+				}
 			}
 			return a.apiSave(rq, rec, http.StatusOK)
 		case http.MethodDelete:
@@ -259,6 +284,14 @@ func (a *App) apiSave(rq *request, rec *runtime.Record, status int) error {
 		if errors.Is(err, ux.ErrForbidden) {
 			return errForbidden
 		}
+		var conflict *runtime.Conflict
+		if errors.As(err, &conflict) {
+			fields := runtime.FieldErrors{}
+			for _, f := range conflict.Fields {
+				fields[f] = "changed by someone else since the version you read"
+			}
+			return &httpError{status: http.StatusConflict, msg: "the record was changed by someone else", fields: fields}
+		}
 		var fe runtime.FieldErrors
 		if errors.As(err, &fe) {
 			return &httpError{status: http.StatusUnprocessableEntity, msg: ux.GeneralError(fe), fields: fe}
@@ -266,6 +299,21 @@ func (a *App) apiSave(rq *request, rec *runtime.Record, status int) error {
 		return err
 	}
 	return writeJSON(rq, status, rec.PublicFor(rq.p))
+}
+
+// stats is what the server knows about itself: the data view layer's
+// counters and each listener.
+func (a *App) stats() map[string]any {
+	out := map[string]any{}
+	if a.Reg.View != nil {
+		out["view"] = a.Reg.View.Stats()
+	}
+	ls := map[string]any{}
+	for name, l := range a.Reg.Listeners {
+		ls[name] = map[string]any{"caps": l.Caps()}
+	}
+	out["listeners"] = ls
+	return out
 }
 
 func (a *App) apiError(rq *request, err error) {

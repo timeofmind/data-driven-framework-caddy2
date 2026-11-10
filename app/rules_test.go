@@ -108,12 +108,12 @@ func TestCalendarRanges(t *testing.T) {
 	if strings.Contains(mine, "Coast relays") {
 		t.Error("adding a meet must not put it on your own calendar")
 	}
-	b.create("/c/meet-entries/new?meet_id="+itoa(meet), url.Values{"meet_id": {itoa(meet)}})
+	entry := mustID(b.create("/c/meet-entries/new?meet_id="+itoa(meet), url.Values{"meet_id": {itoa(meet)}}))
 	_, mine, _ = b.get("/calendar?month=2027-03")
 	if strings.Count(mine, ">Coast relays (entered)<") != 3 {
 		t.Errorf("an entry shows on each day of its meet, got %d", strings.Count(mine, ">Coast relays (entered)<"))
 	}
-	if _, page, _ := b.get("/c/meet-entries/1"); !strings.Contains(page, "<h1>Coast relays</h1>") {
+	if _, page, _ := b.get("/c/meet-entries/" + itoa(entry)); !strings.Contains(page, "<h1>Coast relays</h1>") {
 		t.Error("an entry's page is titled by its meet (title through the link)")
 	}
 	if _, list, _ := b.get("/c/meet-entries"); !strings.Contains(list, "Coast relays") {

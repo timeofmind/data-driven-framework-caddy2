@@ -1,9 +1,6 @@
 package app
 
 import (
-	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,44 +14,8 @@ import (
 // signed-in person's calendar, at a private URL holding a random token.
 // Resetting the token cuts off the old URL at once.
 
-const feedsTable = "_dd_calendar_feeds"
-
 // Feeds cover six months back and eighteen ahead.
 const feedMonthsBack, feedMonthsAhead = 6, 18
-
-func (a *App) createFeedTable(ctx context.Context) error {
-	q := a.Reg.Dialect.Quote
-	ddl := "CREATE TABLE IF NOT EXISTS " + q(feedsTable) + " (principal_id INTEGER NOT NULL PRIMARY KEY, token TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL)"
-	if a.Reg.Dialect.Name() != "sqlite" {
-		ddl = "CREATE TABLE IF NOT EXISTS " + q(feedsTable) + " (principal_id INT NOT NULL PRIMARY KEY, token CHAR(64) NOT NULL, created_at DATETIME NOT NULL, UNIQUE KEY uq_dd_calendar_feeds_token (token)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-	}
-	if _, err := a.Reg.DB.ExecContext(ctx, ddl); err != nil {
-		return fmt.Errorf("datadriven: calendar feeds table: %w", err)
-	}
-	return nil
-}
-
-// feedToken returns p's feed token, creating one (or a new one when reset).
-func (a *App) feedToken(ctx context.Context, principalID int64, reset bool) (string, error) {
-	q := a.Reg.Dialect.Quote
-	if !reset {
-		var tok string
-		err := a.Reg.DB.QueryRowContext(ctx, "SELECT token FROM "+q(feedsTable)+" WHERE principal_id = ?", principalID).Scan(&tok)
-		if err == nil {
-			return tok, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return "", err
-		}
-	}
-	tok := randomToken()
-	if _, err := a.Reg.DB.ExecContext(ctx, "DELETE FROM "+q(feedsTable)+" WHERE principal_id = ?", principalID); err != nil {
-		return "", err
-	}
-	_, err := a.Reg.DB.ExecContext(ctx, "INSERT INTO "+q(feedsTable)+" (principal_id, token, created_at) VALUES (?, ?, ?)",
-		principalID, tok, time.Now().UTC().Format("2006-01-02 15:04:05"))
-	return tok, err
-}
 
 // absURL is path on this site as a full URL (feeds are read by other services).
 func absURL(r *http.Request, path string) string {
@@ -102,9 +63,8 @@ func (a *App) feedICS(w http.ResponseWriter, r *http.Request, file string) {
 		return
 	}
 	ctx := r.Context()
-	var id int64
-	err := a.Reg.DB.QueryRowContext(ctx, "SELECT principal_id FROM "+a.Reg.Dialect.Quote(feedsTable)+" WHERE token = ?", tok).Scan(&id)
-	if err != nil {
+	id, ok := a.feedPrincipal(ctx, tok)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}

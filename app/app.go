@@ -50,6 +50,13 @@ type Config struct {
 	UploadDir      string // where original uploads are kept ("" = not kept)
 	MaxUploadBytes int64
 
+	// TokenKey signs the fetch tokens forms carry (the same on every node
+	// of a cluster); empty: a random key for this process, so tokens
+	// expire at a restart (the browser then loads the page again).
+	TokenKey []byte
+	// NoView runs without the data view layer (reads go to the source).
+	NoView bool
+
 	// ClientIP returns the client address for rate limiting; defaults to RemoteAddr.
 	ClientIP func(*http.Request) string
 	Logger   *slog.Logger
@@ -71,6 +78,7 @@ type App struct {
 	log     *slog.Logger
 	admins  map[string]bool
 	loc     *time.Location
+	signer  *ux.Signer
 }
 
 // New loads the model and pages, connects, brings the database up to date
@@ -111,7 +119,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	m, err := schema.LoadFiles(files...)
+	m, err := schema.Load(frameworkSources(files)...)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +151,19 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 			cfg.Logger.Warn("schema difference needs a manual migration", "listener", name, "detail", p)
 		}
 	}
+	if added, err := reg.EnsureVersions(ctx); err != nil {
+		reg.Close()
+		return nil, fmt.Errorf("datadriven: versions: %w", err)
+	} else if len(added) > 0 {
+		cfg.Logger.Info("added record versions", "tables", added)
+	}
+	if !cfg.NoView {
+		reg.EnableView()
+	}
+	key := cfg.TokenKey
+	if len(key) == 0 {
+		key = []byte(randomToken())
+	}
 	a := &App{cfg: cfg, man: man, Model: m, Reg: reg, Pages: pages, bySlug: map[string]*runtime.Handle{},
 		limiter: newLimiter(), log: cfg.Logger, admins: map[string]bool{}, loc: loc}
 	for _, ad := range cfg.Admins {
@@ -150,7 +171,11 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 			a.admins[ad] = true
 		}
 	}
+	a.signer = ux.NewSigner(key)
 	for _, n := range reg.ClassNames() {
+		if frameworkClass(n) {
+			continue
+		}
 		h := reg.MustClass(n)
 		a.bySlug[generator.ResourcePath(h.Class)] = h
 	}
@@ -167,15 +192,10 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		}
 		a.uploads = reg.MustClass(c.Name)
 	}
-	if err := a.createSessionTable(ctx); err != nil {
-		return fail(err)
-	}
-	if err := a.createFeedTable(ctx); err != nil {
-		return fail(err)
-	}
 	if a.engine, err = ux.NewEngine(pages, reg, cfg.Logger, loc); err != nil {
 		return fail(err)
 	}
+	a.engine.Signer = a.signer
 	a.site, err = webux.New(webux.Options{
 		Engine: a.engine, Name: man.Name, Tagline: man.Tagline, Nav: man.Nav, ThemeDir: man.ThemeDir(),
 		Signup: a.auth != nil && man.signupEnabled(), Log: cfg.Logger,
@@ -274,19 +294,20 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 
 // request carries per-request state.
 type request struct {
-	app    *App
-	w      http.ResponseWriter
-	r      *http.Request
-	p      *runtime.Principal
-	csrf   string
-	handle *runtime.Handle
-	id     int64
+	app     *App
+	w       http.ResponseWriter
+	r       *http.Request
+	p       *runtime.Principal
+	csrf    string
+	session string // the session's hash, for fetch tokens
+	handle  *runtime.Handle
+	id      int64
 }
 
 func (rq *request) ctx() context.Context { return rq.r.Context() }
 
 func (a *App) webRequest(rq *request) *webux.Request {
-	return &webux.Request{W: rq.w, R: rq.r, Viewer: rq.p, CSRF: rq.csrf, Base: a.cfg.BasePath}
+	return &webux.Request{W: rq.w, R: rq.r, Viewer: rq.p, CSRF: rq.csrf, Base: a.cfg.BasePath, Session: rq.session}
 }
 
 // httpError is returned by handlers to produce an error page or JSON error.
@@ -310,7 +331,7 @@ var (
 func (a *App) wrap(rq *request, fn func(*request) error) {
 	a.resolveSession(rq)
 	a.ensureCSRF(rq)
-	if rq.r.Method == http.MethodPost && !a.checkCSRF(rq, rq.r.PostFormValue("_csrf")) {
+	if rq.r.Method == http.MethodPost && !a.fetchTokenOK(rq) && !a.checkCSRF(rq, rq.r.PostFormValue("_csrf")) {
 		if rq.r.PostFormValue("_json") == "1" {
 			writeJSON(rq, http.StatusForbidden, map[string]string{"error": "Your page expired. Reload it and try again."})
 			return
@@ -321,6 +342,18 @@ func (a *App) wrap(rq *request, fn func(*request) error) {
 	if err := fn(rq); err != nil {
 		a.renderError(rq, err)
 	}
+}
+
+// fetchTokenOK reports whether a POST carries a fetch token of this session:
+// it then proves the request came from a page the server issued (the
+// engine checks the page and view too).
+func (a *App) fetchTokenOK(rq *request) bool {
+	tok := rq.r.PostFormValue(ux.ParamFetch)
+	if tok == "" || rq.session == "" {
+		return false
+	}
+	c, ok := a.signer.Verify(tok)
+	return ok && c.Session == rq.session
 }
 
 func (a *App) renderError(rq *request, err error) {
@@ -346,28 +379,7 @@ func (a *App) requireLogin(rq *request) error {
 const (
 	sessionCookie = "dd_session"
 	csrfCookie    = "dd_csrf"
-	sessionsTable = "_dd_sessions"
-	timeLayout    = "2006-01-02 15:04:05"
 )
-
-func (a *App) createSessionTable(ctx context.Context) error {
-	q := a.Reg.Dialect.Quote
-	var ddl []string
-	if a.Reg.Dialect.Name() == "sqlite" {
-		ddl = []string{
-			"CREATE TABLE IF NOT EXISTS " + q(sessionsTable) + " (token_hash TEXT PRIMARY KEY, principal_id INTEGER NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL)",
-			"CREATE INDEX IF NOT EXISTS " + q("idx_dd_sessions_principal") + " ON " + q(sessionsTable) + " (principal_id)",
-		}
-	} else {
-		ddl = []string{"CREATE TABLE IF NOT EXISTS " + q(sessionsTable) + " (token_hash CHAR(64) NOT NULL PRIMARY KEY, principal_id INT NOT NULL, created_at DATETIME NOT NULL, expires_at DATETIME NOT NULL, INDEX idx_dd_sessions_principal (principal_id), INDEX idx_dd_sessions_expires (expires_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"}
-	}
-	for _, s := range ddl {
-		if _, err := a.Reg.DB.ExecContext(ctx, s); err != nil {
-			return fmt.Errorf("datadriven: sessions table: %w", err)
-		}
-	}
-	return nil
-}
 
 func tokenHash(tok string) string {
 	sum := sha256.Sum256([]byte(tok))
@@ -383,31 +395,26 @@ func randomToken() string {
 }
 
 func (a *App) startSession(rq *request, principalID int64) error {
-	tok := randomToken()
-	now := time.Now().UTC()
-	q := a.Reg.Dialect.Quote
-	_, err := a.Reg.DB.ExecContext(rq.ctx(),
-		"INSERT INTO "+q(sessionsTable)+" (token_hash, principal_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-		tokenHash(tok), principalID, now.Format(timeLayout), now.Add(a.cfg.SessionTTL).Format(timeLayout))
+	tok, err := a.newSession(rq.ctx(), principalID)
 	if err != nil {
 		return err
 	}
-	// Opportunistic cleanup of expired sessions.
-	a.Reg.DB.ExecContext(rq.ctx(), "DELETE FROM "+q(sessionsTable)+" WHERE expires_at < ?", now.Format(timeLayout))
 	http.SetCookie(rq.w, &http.Cookie{Name: sessionCookie, Value: tok, Path: a.cookiePath(), HttpOnly: true,
 		Secure: a.cfg.SecureCookies, SameSite: http.SameSiteLaxMode, MaxAge: int(a.cfg.SessionTTL.Seconds())})
 	// Rotate the CSRF token at login.
 	rq.csrf = randomToken()
 	a.setCSRFCookie(rq)
+	rq.session = tokenHash(tok)
 	return nil
 }
 
 func (a *App) endSession(rq *request) {
 	if c, err := rq.r.Cookie(sessionCookie); err == nil {
-		a.Reg.DB.ExecContext(rq.ctx(), "DELETE FROM "+a.Reg.Dialect.Quote(sessionsTable)+" WHERE token_hash = ?", tokenHash(c.Value))
+		a.dropSessions(rq.ctx(), runtime.Eq("token_hash", tokenHash(c.Value)))
 	}
 	a.clearSession(rq.w)
 	rq.p = nil
+	rq.session = ""
 }
 
 func (a *App) clearSession(w http.ResponseWriter) {
@@ -416,7 +423,7 @@ func (a *App) clearSession(w http.ResponseWriter) {
 }
 
 func (a *App) endAllSessions(ctx context.Context, principalID int64) {
-	a.Reg.DB.ExecContext(ctx, "DELETE FROM "+a.Reg.Dialect.Quote(sessionsTable)+" WHERE principal_id = ?", principalID)
+	a.dropSessions(ctx, runtime.Eq("principal_id", principalID))
 }
 
 func (a *App) resolveSession(rq *request) {
@@ -427,21 +434,17 @@ func (a *App) resolveSession(rq *request) {
 	if err != nil || len(c.Value) != 64 {
 		return
 	}
-	var pid int64
-	var expires string
-	err = a.Reg.DB.QueryRowContext(rq.ctx(),
-		"SELECT principal_id, expires_at FROM "+a.Reg.Dialect.Quote(sessionsTable)+" WHERE token_hash = ?", tokenHash(c.Value)).Scan(&pid, &expires)
-	if err != nil {
+	hash := tokenHash(c.Value)
+	s, ok := a.sessionFor(rq.ctx(), hash)
+	if !ok {
 		return
 	}
-	if t, err := time.Parse(timeLayout, strings.Replace(expires[:min(len(expires), 19)], "T", " ", 1)); err != nil || time.Now().UTC().After(t) {
-		return
-	}
-	rec, err := a.auth.Load(rq.ctx(), pid)
+	rec, err := a.auth.Load(rq.ctx(), s.Int("principal_id"))
 	if err != nil {
 		return
 	}
 	rq.p = a.principal(rec)
+	rq.session = hash
 }
 
 func (a *App) principal(rec *runtime.Record) *runtime.Principal {
