@@ -320,6 +320,9 @@ func (a *App) stats() map[string]any {
 	if a.Reg.Log != nil {
 		out["log"] = map[string]any{"bytes": a.Reg.Log.Size(), "last": a.Reg.Log.Last()}
 	}
+	if c := a.Reg.ClusterOf(); c != nil {
+		out["cluster"] = c.Stats()
+	}
 	return out
 }
 

@@ -27,6 +27,7 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 
 	"github.com/timeofmind/data-driven-framework-caddy2/app"
+	"github.com/timeofmind/data-driven-framework-go/cluster"
 )
 
 func init() {
@@ -68,6 +69,8 @@ type Handler struct {
 	// them to admins.
 	UML       string `json:"uml,omitempty"`
 	UMLAdmins bool   `json:"uml_admins,omitempty"`
+	// Cluster joins this node to the others (see app.ClusterConfig).
+	Cluster *app.ClusterConfig `json:"cluster,omitempty"`
 
 	app *app.App
 }
@@ -105,6 +108,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		BaseURL:        h.BaseURL,
 		UMLPath:        h.UML,
 		UMLAdmins:      h.UMLAdmins,
+		Cluster:        h.Cluster,
 		AppDir:         h.App,
 		Driver:         h.Driver,
 		DSN:            caddy.NewReplacer().ReplaceKnown(dsn, ""),
@@ -174,6 +178,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 //		change_log <dir>
 //		base_url <url>
 //		uml <path> [admins]
+//		cluster { self <name>; listen <addr>; node <name> <addr>...; certs <dir>; replicas <n> }
 //	}
 func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // directive name
@@ -225,6 +230,42 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			if !d.AllArgs(&h.ChangeLog) {
 				return d.ArgErr()
 			}
+		case "cluster":
+			c := &app.ClusterConfig{}
+			for nesting := d.Nesting(); d.NextBlock(nesting); {
+				switch d.Val() {
+				case "self":
+					if !d.AllArgs(&c.Self) {
+						return d.ArgErr()
+					}
+				case "listen":
+					if !d.AllArgs(&c.Listen) {
+						return d.ArgErr()
+					}
+				case "node":
+					var n, addr string
+					if !d.AllArgs(&n, &addr) {
+						return d.ArgErr()
+					}
+					c.Nodes = append(c.Nodes, cluster.Member{Name: n, Addr: addr})
+				case "certs":
+					if !d.AllArgs(&c.CertsDir) {
+						return d.ArgErr()
+					}
+				case "replicas":
+					var n string
+					if !d.AllArgs(&n) {
+						return d.ArgErr()
+					}
+					fmt.Sscan(n, &c.Replicas)
+				default:
+					return d.Errf("cluster: unknown setting %q", d.Val())
+				}
+			}
+			if c.Self == "" || c.Listen == "" || len(c.Nodes) == 0 || c.CertsDir == "" {
+				return d.Err("cluster: self, listen, node and certs are required")
+			}
+			h.Cluster = c
 		case "uml":
 			args := d.RemainingArgs()
 			if len(args) < 1 || len(args) > 2 || (len(args) == 2 && args[1] != "admins") {

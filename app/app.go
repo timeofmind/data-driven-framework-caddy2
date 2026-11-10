@@ -67,6 +67,8 @@ type Config struct {
 	// UMLAdmins limits them to admins.
 	UMLPath   string
 	UMLAdmins bool
+	// Cluster, when set, joins this node to the others (needs LogDir).
+	Cluster *ClusterConfig
 
 	// ClientIP returns the client address for rate limiting; defaults to RemoteAddr.
 	ClientIP func(*http.Request) string
@@ -185,6 +187,18 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 			return nil, fmt.Errorf("datadriven: change log: %w", err)
 		}
 		reg.UseLog(bg, lg, runtime.LogOptions{Logger: cfg.Logger})
+	}
+	if cfg.Cluster != nil {
+		if cfg.LogDir == "" {
+			cancel()
+			reg.Close()
+			return nil, errors.New("datadriven: a cluster needs change_log")
+		}
+		if err := joinCluster(bg, reg, cfg); err != nil {
+			cancel()
+			reg.Close()
+			return nil, err
+		}
 	}
 	for _, l := range reg.Listeners {
 		if ml, ok := l.(*mail.Listener); ok {
