@@ -192,12 +192,13 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.ArgErr()
 			}
 		case "database", "database_file":
+			which := d.Val() // before the arguments move the cursor
 			args := d.RemainingArgs()
 			if len(args) != 2 {
 				return d.ArgErr()
 			}
 			h.Driver = args[0]
-			if d.Val() == "database" {
+			if which == "database" {
 				h.DSN = args[1]
 			} else {
 				h.DSNFile = args[1]
