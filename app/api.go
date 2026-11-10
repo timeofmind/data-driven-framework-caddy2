@@ -310,9 +310,16 @@ func (a *App) stats() map[string]any {
 	}
 	ls := map[string]any{}
 	for name, l := range a.Reg.Listeners {
-		ls[name] = map[string]any{"caps": l.Caps()}
+		info := map[string]any{"caps": l.Caps()}
+		if a.Reg.Log != nil {
+			info["pending"] = a.Reg.Log.Pending(name)
+		}
+		ls[name] = info
 	}
 	out["listeners"] = ls
+	if a.Reg.Log != nil {
+		out["log"] = map[string]any{"bytes": a.Reg.Log.Size(), "last": a.Reg.Log.Last()}
+	}
 	return out
 }
 

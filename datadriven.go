@@ -59,6 +59,15 @@ type Handler struct {
 	TokenKeyFile string `json:"token_key_file,omitempty"`
 	// View switches the data view layer off ("off").
 	View string `json:"view,omitempty"`
+	// ChangeLog is the directory of the change log (saves are safe once on
+	// disk; destinations catch up from it).
+	ChangeLog string `json:"change_log,omitempty"`
+	// BaseURL is the site's public URL, for links in mail.
+	BaseURL string `json:"base_url,omitempty"`
+	// UML serves the app's UML diagrams at this path; UMLAdmins limits
+	// them to admins.
+	UML       string `json:"uml,omitempty"`
+	UMLAdmins bool   `json:"uml_admins,omitempty"`
 
 	app *app.App
 }
@@ -92,6 +101,10 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	cfg := app.Config{
 		TokenKey:       key,
 		NoView:         h.View == "off",
+		LogDir:         h.ChangeLog,
+		BaseURL:        h.BaseURL,
+		UMLPath:        h.UML,
+		UMLAdmins:      h.UMLAdmins,
 		AppDir:         h.App,
 		Driver:         h.Driver,
 		DSN:            caddy.NewReplacer().ReplaceKnown(dsn, ""),
@@ -158,6 +171,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyht
 //		uploads <dir> [<max size per file, e.g. 25MB>]
 //		token_key_file <path>
 //		view on|off
+//		change_log <dir>
+//		base_url <url>
+//		uml <path> [admins]
 //	}
 func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	d.Next() // directive name
@@ -203,6 +219,21 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			h.SessionTTL = caddy.Duration(dur)
 		case "token_key_file":
 			if !d.AllArgs(&h.TokenKeyFile) {
+				return d.ArgErr()
+			}
+		case "change_log":
+			if !d.AllArgs(&h.ChangeLog) {
+				return d.ArgErr()
+			}
+		case "uml":
+			args := d.RemainingArgs()
+			if len(args) < 1 || len(args) > 2 || (len(args) == 2 && args[1] != "admins") {
+				return d.ArgErr()
+			}
+			h.UML = args[0]
+			h.UMLAdmins = len(args) == 2
+		case "base_url":
+			if !d.AllArgs(&h.BaseURL) {
 				return d.ArgErr()
 			}
 		case "view":

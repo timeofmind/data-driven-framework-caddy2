@@ -22,8 +22,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/timeofmind/data-driven-framework-go/changelog"
 	"github.com/timeofmind/data-driven-framework-go/generator"
 	"github.com/timeofmind/data-driven-framework-go/listener"
+	"github.com/timeofmind/data-driven-framework-go/listener/mail"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/sql"
 	"github.com/timeofmind/data-driven-framework-go/model"
 	"github.com/timeofmind/data-driven-framework-go/routing"
@@ -56,6 +58,15 @@ type Config struct {
 	TokenKey []byte
 	// NoView runs without the data view layer (reads go to the source).
 	NoView bool
+	// LogDir, when set, keeps the change log there: a save is safe once on
+	// disk, and the destinations catch up from it.
+	LogDir string
+	// BaseURL is the site's public URL, for links in mail.
+	BaseURL string
+	// UMLPath serves the app's UML diagrams there ("" = not served);
+	// UMLAdmins limits them to admins.
+	UMLPath   string
+	UMLAdmins bool
 
 	// ClientIP returns the client address for rate limiting; defaults to RemoteAddr.
 	ClientIP func(*http.Request) string
@@ -79,6 +90,7 @@ type App struct {
 	admins  map[string]bool
 	loc     *time.Location
 	signer  *ux.Signer
+	cancel  context.CancelFunc
 }
 
 // New loads the model and pages, connects, brings the database up to date
@@ -110,6 +122,9 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return nil, err
 	}
 	cfg.BasePath = strings.TrimRight(cfg.BasePath, "/")
+	if cfg.UMLPath != "" {
+		cfg.UMLPath = "/" + strings.Trim(cfg.UMLPath, "/")
+	}
 	if cfg.SessionTTL == 0 {
 		cfg.SessionTTL = 30 * 24 * time.Hour
 	}
@@ -160,12 +175,47 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	if !cfg.NoView {
 		reg.EnableView()
 	}
+	bg, cancel := context.WithCancel(context.Background())
+	if cfg.LogDir != "" {
+		lg, err := changelog.Open(cfg.LogDir, changelog.Options{ModelHash: m.Hash(), AlertBytes: 1 << 30, HardBytes: 8 << 30,
+			Alert: func(size int64) { cfg.Logger.Error("the change log is large: a destination is behind", "bytes", size) }})
+		if err != nil {
+			cancel()
+			reg.Close()
+			return nil, fmt.Errorf("datadriven: change log: %w", err)
+		}
+		reg.UseLog(bg, lg, runtime.LogOptions{Logger: cfg.Logger})
+	}
+	for _, l := range reg.Listeners {
+		if ml, ok := l.(*mail.Listener); ok {
+			ml.Resolve = func(ctx context.Context, class string, id int64) (map[string]any, error) {
+				rec, err := reg.MustClass(class).Load(ctx, id)
+				if err != nil {
+					return nil, err
+				}
+				return rec.Values, nil
+			}
+			ml.Record = func(ctx context.Context, class string, id int64, values map[string]any) error {
+				h := reg.MustClass(class)
+				rec, err := h.Load(ctx, id)
+				if err != nil {
+					return err
+				}
+				for k, v := range values {
+					if h.Class.Slot(k) != nil {
+						rec.Values[k] = v
+					}
+				}
+				return h.Save(ctx, rec)
+			}
+		}
+	}
 	key := cfg.TokenKey
 	if len(key) == 0 {
 		key = []byte(randomToken())
 	}
 	a := &App{cfg: cfg, man: man, Model: m, Reg: reg, Pages: pages, bySlug: map[string]*runtime.Handle{},
-		limiter: newLimiter(), log: cfg.Logger, admins: map[string]bool{}, loc: loc}
+		limiter: newLimiter(), log: cfg.Logger, admins: map[string]bool{}, loc: loc, cancel: cancel}
 	for _, ad := range cfg.Admins {
 		if ad = strings.ToLower(strings.TrimSpace(ad)); ad != "" {
 			a.admins[ad] = true
@@ -183,6 +233,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		a.auth = h
 	}
 	fail := func(err error) (*App, error) {
+		cancel()
 		reg.Close()
 		return nil, err
 	}
@@ -227,8 +278,17 @@ func openRegistry(m *model.Model, man *Manifest, cfg Config) (*runtime.Registry,
 	return runtime.OpenRouted(m, rt)
 }
 
-// Close releases the database.
-func (a *App) Close() error { return a.Reg.Close() }
+// Close stops the delivery loops and releases the listeners and the log.
+func (a *App) Close() error {
+	a.cancel()
+	err := a.Reg.Close()
+	if a.Reg.Log != nil {
+		if lerr := a.Reg.Log.Close(); lerr != nil && err == nil {
+			err = lerr
+		}
+	}
+	return err
+}
 
 // ServeHTTP serves the app, answering 404 for paths it does not own.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -280,6 +340,11 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		a.feedICS(w, r, strings.TrimPrefix(path, strings.TrimRight(feedPage.Path, "/")+"/feed/"))
 	case parts[0] == "api" && len(parts) >= 2 && parts[1] == "v1":
 		a.api(rq, parts[2:])
+	case a.cfg.UMLPath != "" && (path == a.cfg.UMLPath || strings.HasPrefix(path, a.cfg.UMLPath+"/")):
+		a.wrap(rq, func(rq *request) error {
+			a.serveUML(rq, strings.TrimPrefix(path, a.cfg.UMLPath))
+			return nil
+		})
 	default:
 		if p, _ := a.Pages.Match(path); p == nil {
 			return false

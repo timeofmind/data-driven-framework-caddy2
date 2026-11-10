@@ -518,3 +518,25 @@ func resetMySQL(t *testing.T, dsn string) {
 		}
 	}
 }
+
+func TestUML(t *testing.T) {
+	a, srv := newTestApp(t)
+	a.cfg.UMLPath = "/uml"
+	b := newBrowser(t, srv)
+	code, body, _ := b.get("/uml")
+	if code != http.StatusOK || !strings.Contains(body, "Class diagram") {
+		t.Fatalf("uml index: %d %s", code, extractAlert(body))
+	}
+	code, body, hdr := b.get("/uml/class")
+	if code != http.StatusOK || !strings.Contains(body, "classDiagram") || !strings.Contains(hdr.Get("Content-Security-Policy"), "cdn.jsdelivr.net") ||
+		strings.Contains(body, "FrameworkSession") {
+		t.Errorf("class diagram page: %d", code)
+	}
+	code, body, hdr = b.get("/uml/class.mmd")
+	if code != http.StatusOK || !strings.HasPrefix(body, "classDiagram") || !strings.HasPrefix(hdr.Get("Content-Type"), "text/plain") {
+		t.Errorf("mermaid text: %d %q", code, hdr.Get("Content-Type"))
+	}
+	if code, _, _ := b.get("/uml/nope"); code != http.StatusNotFound {
+		t.Errorf("unknown diagram: %d", code)
+	}
+}
