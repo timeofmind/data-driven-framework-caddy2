@@ -131,7 +131,7 @@ func TestReschedule(t *testing.T) {
 	ann.create("/c/meetups/new", url.Values{"title": {"Sunday stroll"}, "day": {"2027-03-14"}})
 	_, cal, _ := ann.get("/calendar?month=2027-03")
 	m := regexp.MustCompile(`data-dd-record="` + itoa(walk) + `" data-dd-show="(\d+)"`).FindStringSubmatch(cal)
-	if m == nil || !strings.Contains(cal, "/_dd/calendar.") || !strings.Contains(cal, `data-date="2027-03-10"`) || !strings.Contains(cal, `data-dd-view="calendar1"`) {
+	if m == nil || !strings.Contains(cal, "/_dd/grid.") || !strings.Contains(cal, `data-cell="2027-03-10"`) || !strings.Contains(cal, `data-dd-view="calendar1"`) {
 		t.Fatalf("a walk can be dragged:\n%s", cal)
 	}
 	if strings.Count(cal, "data-dd-record=") != 1 {
@@ -161,7 +161,7 @@ func TestReschedule(t *testing.T) {
 	if code, _ := drag(ben, ben.csrf("/c/walks/new"), "2027-03-01"); code == http.StatusOK {
 		t.Error("only someone who may edit the walk can move it")
 	}
-	if _, cal, _ := ben.get("/calendar?month=2027-03"); strings.Contains(cal, "/_dd/calendar.") {
+	if _, cal, _ := ben.get("/calendar?month=2027-03"); strings.Contains(cal, "/_dd/grid.") {
 		t.Error("nothing to move, no script")
 	}
 }
