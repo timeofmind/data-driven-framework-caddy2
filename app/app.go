@@ -155,7 +155,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		if !l.Caps().Schema {
 			continue
 		}
-		res, err := l.Prepare(ctx, m, listener.PrepareOptions{})
+		res, err := l.Prepare(ctx, m, listener.PrepareOptions{Classes: reg.Holds(name)})
 		if err != nil {
 			reg.Close()
 			return nil, fmt.Errorf("datadriven: schema (%s): %w", name, err)
