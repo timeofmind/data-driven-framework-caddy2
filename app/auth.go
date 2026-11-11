@@ -44,6 +44,9 @@ func (a *App) signup(rq *request) error {
 					}
 					fe = runtime.FieldErrors{au.Login: "already has an account — sign in instead"}
 				}
+				if fe[au.Login] != "" { // the login's uniqueness, checked by the save
+					fe[au.Login] = "already has an account — sign in instead"
+				}
 				errs = fe
 			} else {
 				if err := a.startSession(rq, rec.ID()); err != nil {
