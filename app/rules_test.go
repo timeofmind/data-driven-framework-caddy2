@@ -134,8 +134,8 @@ func TestReschedule(t *testing.T) {
 	if m == nil || !strings.Contains(cal, "/_dd/grid.") || !strings.Contains(cal, `data-cell="2027-03-10"`) || !strings.Contains(cal, `data-dd-view="calendar1"`) {
 		t.Fatalf("a walk can be dragged:\n%s", cal)
 	}
-	if strings.Count(cal, "data-dd-record=") != 1 {
-		t.Error("meetups are not draggable on the calendar (no drag in its show)")
+	if strings.Count(cal, `draggable="true"`) != 1 || strings.Count(cal, "data-dd-record=") != 2 || !strings.Contains(cal, "/_dd/dd.") {
+		t.Error("meetups are not draggable on the calendar (no drag in its show), but every entry is a row of the client library")
 	}
 	_, js, h := ann.get(strings.Split(strings.Split(cal, `<script src="`)[1], `"`)[0])
 	if !strings.Contains(js, "data-dd-record") || !strings.Contains(h.Get("Cache-Control"), "immutable") {
@@ -161,8 +161,8 @@ func TestReschedule(t *testing.T) {
 	if code, _ := drag(ben, ben.csrf("/c/walks/new"), "2027-03-01"); code == http.StatusOK {
 		t.Error("only someone who may edit the walk can move it")
 	}
-	if _, cal, _ := ben.get("/calendar?month=2027-03"); strings.Contains(cal, "/_dd/grid.") {
-		t.Error("nothing to move, no script")
+	if _, cal, _ := ben.get("/calendar?month=2027-03"); strings.Contains(cal, "/_dd/grid.") || !strings.Contains(cal, "/_dd/dd.") {
+		t.Error("nothing to move, no grid script; the library is always there")
 	}
 }
 
