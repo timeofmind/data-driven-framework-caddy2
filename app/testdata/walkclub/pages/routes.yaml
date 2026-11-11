@@ -15,4 +15,5 @@ interface_views:
         rank_by_usage: true
     sort: [name asc]
     mine: true
+    live: push
     add: {page: new-route, label: New route}

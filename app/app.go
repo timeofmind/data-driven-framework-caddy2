@@ -363,6 +363,10 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		if p, _ := a.Pages.Match(path); p == nil {
 			return false
 		}
+		if r.Method == http.MethodGet && r.URL.Query().Get("_live") == "1" {
+			a.wrap(rq, func(rq *request) error { return a.live(rq, path) })
+			return true
+		}
 		a.wrap(rq, func(rq *request) error {
 			a.site.ServePage(a.webRequest(rq), path)
 			return nil
