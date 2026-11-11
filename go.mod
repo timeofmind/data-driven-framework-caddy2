@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/muktihari/fit v0.28.5
-	github.com/timeofmind/data-driven-framework-go v0.31.0
+	github.com/timeofmind/data-driven-framework-go v0.32.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

@@ -60,6 +60,9 @@ type Handler struct {
 	TokenKeyFile string `json:"token_key_file,omitempty"`
 	// View switches the data view layer off ("off").
 	View string `json:"view,omitempty"`
+	// Timers switches the firing of the model's timed triggers off ("off")
+	// on this node; on by default (the cluster's leader fires them).
+	Timers string `json:"timers,omitempty"`
 	// ChangeLog is the directory of the change log (saves are safe once on
 	// disk; destinations catch up from it).
 	ChangeLog string `json:"change_log,omitempty"`
@@ -104,6 +107,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 	cfg := app.Config{
 		TokenKey:       key,
 		NoView:         h.View == "off",
+		NoTimers:       h.Timers == "off",
 		LogDir:         h.ChangeLog,
 		BaseURL:        h.BaseURL,
 		UMLPath:        h.UML,
@@ -293,6 +297,14 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				return d.Errf("view: expected on or off, got %q", d.Val())
 			}
 			h.View = d.Val()
+		case "timers":
+			if !d.NextArg() {
+				return d.ArgErr()
+			}
+			if d.Val() != "on" && d.Val() != "off" {
+				return d.Errf("timers: expected on or off, got %q", d.Val())
+			}
+			h.Timers = d.Val()
 		case "uploads":
 			args := d.RemainingArgs()
 			if len(args) < 1 || len(args) > 2 {

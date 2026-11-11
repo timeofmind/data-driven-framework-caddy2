@@ -60,6 +60,8 @@ type Config struct {
 	TokenKey []byte
 	// NoView runs without the data view layer (reads go to the source).
 	NoView bool
+	// NoTimers keeps this node from firing the model's timed triggers.
+	NoTimers bool
 	// LogDir, when set, keeps the change log there: a save is safe once on
 	// disk, and the destinations catch up from it.
 	LogDir string
@@ -201,6 +203,11 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 			reg.Close()
 			return nil, err
 		}
+	}
+	// The model's timed triggers (a clock running out): fired by the
+	// cluster's leader, or by the only node, after the log has been replayed.
+	if !cfg.NoTimers {
+		reg.StartTimers(bg, cfg.Logger)
 	}
 	for _, l := range reg.Listeners {
 		if ml, ok := l.(*mail.Listener); ok {

@@ -38,6 +38,9 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   cuts off the old one at once.
 - **A JSON API** at `/api/v1/<resource>` for every class, with a generated OpenAPI 3
   document; `read: owner` fields only reach their owner.
+- **Timed triggers**: the model's `at` triggers (a game's clock running out) are fired
+  by the cluster's leader, or by the only node, through the normal save path; `timers off`
+  in the `datadriven` block keeps a node from firing them.
 - **File uploads** into an upload view's class (one with an `import` block): built-in
   readers for FIT (Garmin, COROS, Suunto, Wahoo, Polar), GPX, TCX and timing-system
   CSV produce device-neutral fields; the model's import block decides what they become.
