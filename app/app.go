@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -203,6 +204,27 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	}
 	for _, l := range reg.Listeners {
 		if ml, ok := l.(*mail.Listener); ok {
+			if d := ml.Dir(); d != "" && !filepath.IsAbs(d) {
+				ml.SetDir(filepath.Join(cfg.AppDir, d)) // the app's mail/ directory
+			}
+			if ml.BaseURL() == "" {
+				ml.SetBaseURL(cfg.BaseURL)
+			}
+			if tc := ml.TemplateClass; tc != "" {
+				if reg.Model.Class(tc) == nil {
+					cancel()
+					reg.Close()
+					return nil, fmt.Errorf("mail listener %s: template_class %s is not in the model", ml.Name(), tc)
+				}
+				ml.Lookup = func(ctx context.Context, name string) (*mail.Template, error) {
+					recs, err := reg.MustClass(tc).List(ctx, runtime.Query{Where: []runtime.Cond{runtime.Eq("name", name)}, Limit: 1})
+					if err != nil || len(recs) == 0 {
+						return nil, err
+					}
+					r := recs[0]
+					return mail.NewTemplate(r.String("to"), r.String("subject"), r.String("body"), r.String("vars"))
+				}
+			}
 			ml.Resolve = func(ctx context.Context, class string, id int64) (map[string]any, error) {
 				rec, err := reg.MustClass(class).Load(ctx, id)
 				if err != nil {
@@ -252,6 +274,9 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		reg.Close()
 		return nil, err
 	}
+	if err := a.resetClassOK(); err != nil {
+		return fail(err)
+	}
 	if c := pages.UploadClass(); c != nil {
 		if len(acceptedFormats(c)) == 0 {
 			return fail(fmt.Errorf("upload: none of %v has a file reader (available: %v)", c.Import.Formats, importerNames()))
@@ -264,7 +289,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	a.engine.Signer = a.signer
 	a.site, err = webux.New(webux.Options{
 		Engine: a.engine, Name: man.Name, Tagline: man.Tagline, Nav: man.Nav, ThemeDir: man.ThemeDir(),
-		Signup: a.auth != nil && man.signupEnabled(), Log: cfg.Logger,
+		Signup: a.auth != nil && man.signupEnabled(), Reset: a.resetEnabled(), Log: cfg.Logger,
 		Upload: a.uploadView, UploadInfo: a.uploadInfo,
 		SignedOut: func(rq *webux.Request) {
 			if rq.Viewer != nil {
@@ -345,6 +370,10 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		a.wrap(rq, a.signup)
 	case path == "/login" && a.auth != nil:
 		a.wrap(rq, a.login)
+	case path == "/forgot" && a.resetEnabled():
+		a.wrap(rq, a.forgot)
+	case path == "/reset" && a.resetEnabled():
+		a.wrap(rq, a.reset)
 	case path == "/logout" && a.auth != nil:
 		a.wrap(rq, a.logout)
 	case path == "/me" && a.auth != nil:

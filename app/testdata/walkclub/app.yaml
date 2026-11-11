@@ -5,4 +5,5 @@ model: [model/*.yaml]
 pages: [pages/*.yaml]
 timezone: America/Vancouver
 signup: {enabled: true, intro: "Join the club."}
+password_reset: {class: PasswordReset, expires: 1h}
 nav: [calendar, walks, routes, meetups, trips, meets, outings, upload]

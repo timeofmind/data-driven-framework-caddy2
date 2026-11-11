@@ -68,7 +68,12 @@ example.com {
 }
 ```
 
-The handler answers its pages' paths, `/signup`, `/login`, `/logout`, `/me`, a
+The handler answers its pages' paths, `/signup`, `/login`, `/logout`, `/me`, `/forgot`
+and `/reset` (when `password_reset` names the app's class of reset codes: it belongs to
+the auth class and has `code`, `expires_at` and `used_at`; the record the forgot page
+saves flows wherever the routing sends the class — a mail listener with a template
+holding `{{.base_url}}/reset?code={{.record.code}}` — and the answer never says whether
+the account exists), a
 calendar's `/feed`, `/static/…`, `/_dd/…` and `/api/v1/…`; everything else falls
 through to the next handler.
 
@@ -82,6 +87,7 @@ pages: [pages/*.yaml]              # default
 theme: theme                       # default "theme"
 timezone: America/Vancouver        # "today", and the default for imports
 signup: {enabled: true, intro: "Shown above the sign-up form"}
+password_reset: {class: PasswordReset, expires: 1h}   # /forgot emails a link, /reset?code=… sets the password
 nav: [calendar, walks, routes]     # page names in the main menu
 ```
 
@@ -93,7 +99,7 @@ A theme replaces any of web-ux's templates by file name — `layout.html` (defin
 `head` and `foot`, the frame of every page), `page.html`, the interface views'
 `iv-list.html`, `iv-calendar.html`, `iv-detail.html`, `iv-form.html`,
 `iv-chips.html`, `iv-upload.html`, `iv-text.html`, and `confirm`, `error`, `login`,
-`signup`, `feed` — and supplies `static/` (served at `/static/…`). Anything it leaves
+`signup`, `forgot`, `reset`, `feed` — and supplies `static/` (served at `/static/…`). Anything it leaves
 out comes from the built-in look. Calendar items and tags carry CSS classes for enum
 values (`<slot>-<value>`, `tag-<value>`) so a theme can colour them.
 

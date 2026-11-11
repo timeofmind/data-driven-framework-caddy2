@@ -21,6 +21,7 @@ import (
 //	theme: theme                     # templates and static/ (default "theme")
 //	timezone: America/Vancouver      # "today", and the default for imports
 //	signup: {enabled: true, intro: "Shown above the sign-up form"}
+//	password_reset: {class: PasswordReset, expires: 1h}   # /forgot and /reset (see reset.go)
 //	nav: [calendar, walks, routes]   # page names in the main navigation
 type Manifest struct {
 	Name     string   `yaml:"name"`
@@ -34,6 +35,13 @@ type Manifest struct {
 		Enabled *bool  `yaml:"enabled"`
 		Intro   string `yaml:"intro"`
 	} `yaml:"signup"`
+	// PasswordReset enables /forgot and /reset: Class is the app's class
+	// holding reset codes (belongs to the auth class; slots code, expires_at,
+	// used_at), Expires how long a code is good for (default 1h).
+	PasswordReset struct {
+		Class   string `yaml:"class"`
+		Expires string `yaml:"expires"`
+	} `yaml:"password_reset"`
 	Nav []string `yaml:"nav"`
 
 	dir string
