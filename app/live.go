@@ -91,7 +91,7 @@ func (a *App) liveEvent(ctx context.Context, p *runtime.Principal, sc ux.LiveSco
 	if n.Class != sc.Class {
 		return nil
 	}
-	ev := map[string]any{"view": sc.View, "class": n.Class, "id": n.ID, "kind": string(n.Kind)}
+	ev := map[string]any{"view": sc.View, "class": n.Class, "id": n.ID, "kind": string(n.Kind), "version": n.Version}
 	h, err := a.Reg.Class(sc.Class)
 	if err != nil {
 		return nil

@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -368,6 +369,12 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 		a.wrap(rq, func(rq *request) error {
+			// A redraw after a push names the newest version the browser was
+			// pushed (by any node): this node waits to have applied it, so
+			// the page is never older than the push that asked for it.
+			if seen, _ := strconv.ParseInt(r.URL.Query().Get("_seen"), 10, 64); seen > 0 {
+				a.Reg.View.WaitApplied(rq.ctx(), seen, 1500*time.Millisecond)
+			}
 			a.site.ServePage(a.webRequest(rq), path)
 			return nil
 		})
