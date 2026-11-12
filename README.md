@@ -47,6 +47,10 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   priority order — Claude, OpenAI, Kimi — until one answers; the answer is saved onto
   the record through the normal save path, so it is pushed to pages and the model's
   triggers carry it on. The cluster's leader asks; API keys come from the environment.
+- **Shops**: the framework's `shipping` and `paypal` listeners (a test mode that charges
+  nothing), receipts by mail on an update, and the cart library served at `/_dd/cart.js`
+  are wired here like mail: any listener taking hooks gets the app's records, their
+  children and the write-back. See the framework's `docs/shop-library.md`.
 - **File uploads** into an upload view's class (one with an `import` block): built-in
   readers for FIT (Garmin, COROS, Suunto, Wahoo, Polar), GPX, TCX and timing-system
   CSV produce device-neutral fields; the model's import block decides what they become.

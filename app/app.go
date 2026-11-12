@@ -27,8 +27,11 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/changelog"
 	"github.com/timeofmind/data-driven-framework-go/generator"
 	"github.com/timeofmind/data-driven-framework-go/listener"
+	"github.com/timeofmind/data-driven-framework-go/listener/hooks"
 	"github.com/timeofmind/data-driven-framework-go/listener/llm"
 	"github.com/timeofmind/data-driven-framework-go/listener/mail"
+	_ "github.com/timeofmind/data-driven-framework-go/listener/paypal"
+	_ "github.com/timeofmind/data-driven-framework-go/listener/shipping"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/sql"
 	"github.com/timeofmind/data-driven-framework-go/model"
 	"github.com/timeofmind/data-driven-framework-go/routing"
@@ -210,11 +213,62 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	if !cfg.NoTimers {
 		reg.StartTimers(bg, cfg.Logger)
 	}
-	for _, l := range reg.Listeners {
-		if ml, ok := l.(*mail.Listener); ok {
-			if d := ml.Dir(); d != "" && !filepath.IsAbs(d) {
-				ml.SetDir(filepath.Join(cfg.AppDir, d)) // the app's mail/ directory
+	// The destinations that answer records (mail, llm, paypal, shipping)
+	// take what they need from the app: records and their children for
+	// their templates, and the outcome written back onto the record.
+	appHooks := hooks.Hooks{
+		Logger: cfg.Logger,
+		Resolve: func(ctx context.Context, class string, id int64) (map[string]any, error) {
+			rec, err := reg.MustClass(class).Load(ctx, id)
+			if err != nil {
+				return nil, err
 			}
+			reg.LoadLinks(ctx, rec)
+			vals := map[string]any{}
+			for k, v := range rec.Values {
+				vals[k] = v
+			}
+			for _, cv := range runtime.Computed(rec) {
+				vals[cv.Name] = cv.Value
+			}
+			return vals, nil
+		},
+		Children: func(ctx context.Context, class string, id int64, rel string) ([]map[string]any, error) {
+			h := reg.MustClass(class)
+			rec, err := h.Load(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			kids, err := h.Children(ctx, rec, rel, runtime.Query{Limit: 1000})
+			if err != nil {
+				return nil, err
+			}
+			out := make([]map[string]any, len(kids))
+			for i, k := range kids {
+				reg.LoadLinks(ctx, k)
+				vals := map[string]any{}
+				for f, v := range k.Values {
+					vals[f] = v
+				}
+				for _, cv := range runtime.Computed(k) {
+					vals[cv.Name] = cv.Value
+				}
+				out[i] = vals
+			}
+			return out, nil
+		},
+		Record: recordOutcome(reg),
+	}
+	for _, l := range reg.Listeners {
+		if h, ok := l.(hooks.Hooked); ok {
+			h.SetHooks(appHooks)
+		}
+		if t, ok := l.(hooks.Templated); ok {
+			if d := t.Dir(); d != "" && !filepath.IsAbs(d) {
+				t.SetDir(filepath.Join(cfg.AppDir, d)) // the app's mail/ or llm/ directory
+			}
+		}
+		if ml, ok := l.(*mail.Listener); ok {
 			if ml.BaseURL() == "" {
 				ml.SetBaseURL(cfg.BaseURL)
 			}
@@ -233,23 +287,8 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 					return mail.NewTemplate(r.String("to"), r.String("subject"), r.String("body"), r.String("vars"))
 				}
 			}
-			ml.Resolve = func(ctx context.Context, class string, id int64) (map[string]any, error) {
-				rec, err := reg.MustClass(class).Load(ctx, id)
-				if err != nil {
-					return nil, err
-				}
-				return rec.Values, nil
-			}
-			ml.Record = recordOutcome(reg)
 		}
-		// A language-model listener: templates from the app's llm/ directory
-		// or a class of them, the records it asks about resolved through the
-		// registry, the answer deposited on the record that asked.
 		if ll, ok := l.(*llm.Listener); ok {
-			if d := ll.Dir(); d != "" && !filepath.IsAbs(d) {
-				ll.SetDir(filepath.Join(cfg.AppDir, d))
-			}
-			ll.Logger = cfg.Logger
 			if tc := ll.TemplateClass; tc != "" {
 				if reg.Model.Class(tc) == nil {
 					cancel()
@@ -265,14 +304,6 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 					return llm.NewTemplate(r.String("system"), r.String("prompt"), r.String("model"), int(r.Int("max_tokens")), r.Bool("json"), r.String("vars"))
 				}
 			}
-			ll.Resolve = func(ctx context.Context, class string, id int64) (map[string]any, error) {
-				rec, err := reg.MustClass(class).Load(ctx, id)
-				if err != nil {
-					return nil, err
-				}
-				return rec.Values, nil
-			}
-			ll.Record = recordOutcome(reg)
 		}
 	}
 	key := cfg.TokenKey
