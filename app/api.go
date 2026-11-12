@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/timeofmind/data-driven-framework-go/generator"
 	"github.com/timeofmind/data-driven-framework-go/model"
@@ -32,6 +33,16 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 	unsafe := m != http.MethodGet && m != http.MethodHead && m != http.MethodOptions
 	if unsafe && !a.checkCSRF(rq, rq.r.Header.Get("X-CSRF-Token")) {
 		return errStatus(http.StatusForbidden, "missing or invalid X-CSRF-Token header")
+	}
+	// A read that names the newest version the client has seen (_seen, as a
+	// page's redraw does): this node waits to have applied it, so a read after
+	// a write — on any node of the cluster — is never older than the write.
+	// Every answer says the newest version this node has applied.
+	if a.Reg.View != nil {
+		if seen, _ := strconv.ParseInt(rq.r.URL.Query().Get("_seen"), 10, 64); seen > 0 && !unsafe {
+			a.Reg.View.WaitApplied(rq.ctx(), seen, 1500*time.Millisecond)
+		}
+		rq.w.Header().Set("X-DD-Version", strconv.FormatInt(a.Reg.View.AppliedVersion(), 10))
 	}
 	switch {
 	case len(parts) == 1 && parts[0] == "openapi.json":
@@ -103,7 +114,7 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 			if rec.Version != 0 {
 				rq.w.Header().Set("ETag", fmt.Sprintf("\"%d\"", rec.Version))
 			}
-			return writeJSON(rq, http.StatusOK, rec.PublicFor(rq.p))
+			return writeJSON(rq, http.StatusOK, apiRecord(rq, rec))
 		case http.MethodPut, http.MethodPatch:
 			if ok, _ := a.Reg.Writable(rq.ctx(), rec, rq.p); !ok {
 				return errForbidden
@@ -232,7 +243,7 @@ func (a *App) apiList(rq *request) error {
 	}
 	data := make([]map[string]any, len(recs))
 	for i, r := range recs {
-		data[i] = r.PublicFor(rq.p)
+		data[i] = apiRecord(rq, r)
 	}
 	return writeJSON(rq, http.StatusOK, map[string]any{"data": data, "total": total, "page": pageNo, "per_page": per})
 }
@@ -298,7 +309,7 @@ func (a *App) apiSave(rq *request, rec *runtime.Record, status int) error {
 		}
 		return err
 	}
-	return writeJSON(rq, status, rec.PublicFor(rq.p))
+	return writeJSON(rq, status, apiRecord(rq, rec))
 }
 
 // stats is what the server knows about itself: the data view layer's
@@ -341,6 +352,16 @@ func (a *App) apiError(rq *request, err error) {
 		body["fields"] = he.fields
 	}
 	writeJSON(rq, he.status, body)
+}
+
+// apiRecord is a record as the API gives it: the slots the viewer may see,
+// and _version, the record's version, for a client to hand back as _seen.
+func apiRecord(rq *request, rec *runtime.Record) map[string]any {
+	out := rec.PublicFor(rq.p)
+	if rec.Version != 0 {
+		out["_version"] = rec.Version
+	}
+	return out
 }
 
 func writeJSON(rq *request, status int, v any) error {
