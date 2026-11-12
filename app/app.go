@@ -27,6 +27,7 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/changelog"
 	"github.com/timeofmind/data-driven-framework-go/generator"
 	"github.com/timeofmind/data-driven-framework-go/listener"
+	"github.com/timeofmind/data-driven-framework-go/listener/llm"
 	"github.com/timeofmind/data-driven-framework-go/listener/mail"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/sql"
 	"github.com/timeofmind/data-driven-framework-go/model"
@@ -239,19 +240,39 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 				}
 				return rec.Values, nil
 			}
-			ml.Record = func(ctx context.Context, class string, id int64, values map[string]any) error {
-				h := reg.MustClass(class)
-				rec, err := h.Load(ctx, id)
-				if err != nil {
-					return err
-				}
-				for k, v := range values {
-					if h.Class.Slot(k) != nil {
-						rec.Values[k] = v
-					}
-				}
-				return h.Save(ctx, rec)
+			ml.Record = recordOutcome(reg)
+		}
+		// A language-model listener: templates from the app's llm/ directory
+		// or a class of them, the records it asks about resolved through the
+		// registry, the answer deposited on the record that asked.
+		if ll, ok := l.(*llm.Listener); ok {
+			if d := ll.Dir(); d != "" && !filepath.IsAbs(d) {
+				ll.SetDir(filepath.Join(cfg.AppDir, d))
 			}
+			ll.Logger = cfg.Logger
+			if tc := ll.TemplateClass; tc != "" {
+				if reg.Model.Class(tc) == nil {
+					cancel()
+					reg.Close()
+					return nil, fmt.Errorf("llm listener %s: template_class %s is not in the model", ll.Name(), tc)
+				}
+				ll.Lookup = func(ctx context.Context, name string) (*llm.Template, error) {
+					recs, err := reg.MustClass(tc).List(ctx, runtime.Query{Where: []runtime.Cond{runtime.Eq("name", name)}, Limit: 1})
+					if err != nil || len(recs) == 0 {
+						return nil, err
+					}
+					r := recs[0]
+					return llm.NewTemplate(r.String("system"), r.String("prompt"), r.String("model"), int(r.Int("max_tokens")), r.Bool("json"), r.String("vars"))
+				}
+			}
+			ll.Resolve = func(ctx context.Context, class string, id int64) (map[string]any, error) {
+				rec, err := reg.MustClass(class).Load(ctx, id)
+				if err != nil {
+					return nil, err
+				}
+				return rec.Values, nil
+			}
+			ll.Record = recordOutcome(reg)
 		}
 	}
 	key := cfg.TokenKey
@@ -510,6 +531,25 @@ const (
 func tokenHash(tok string) string {
 	sum := sha256.Sum256([]byte(tok))
 	return hex.EncodeToString(sum[:])
+}
+
+// recordOutcome writes what a destination (mail, a language model) reports
+// about a record onto it — the slots the class has, through the normal save
+// path, so the outcome is logged, replicated and pushed like any change.
+func recordOutcome(reg *runtime.Registry) func(ctx context.Context, class string, id int64, values map[string]any) error {
+	return func(ctx context.Context, class string, id int64, values map[string]any) error {
+		h := reg.MustClass(class)
+		rec, err := h.Load(ctx, id)
+		if err != nil {
+			return err
+		}
+		for k, v := range values {
+			if h.Class.Slot(k) != nil {
+				rec.Values[k] = v
+			}
+		}
+		return h.Save(ctx, rec)
+	}
 }
 
 func randomToken() string {

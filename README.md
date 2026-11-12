@@ -41,6 +41,12 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
 - **Timed triggers**: the model's `at` triggers (a game's clock running out) are fired
   by the cluster's leader, or by the only node, through the normal save path; `timers off`
   in the `datadriven` block keeps a node from firing them.
+- **Language models**: a class routed to an `llm` listener (framework `listener/llm`)
+  has each new record rendered through a template in the app's `llm/` directory (or a
+  record of the listener's `template_class`) and asked of the configured providers in
+  priority order — Claude, OpenAI, Kimi — until one answers; the answer is saved onto
+  the record through the normal save path, so it is pushed to pages and the model's
+  triggers carry it on. The cluster's leader asks; API keys come from the environment.
 - **File uploads** into an upload view's class (one with an `import` block): built-in
   readers for FIT (Garmin, COROS, Suunto, Wahoo, Polar), GPX, TCX and timing-system
   CSV produce device-neutral fields; the model's import block decides what they become.
