@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/timeofmind/data-driven-framework-go/changelog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -79,6 +80,37 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 			return errForbidden
 		}
 		return writeJSON(rq, http.StatusOK, a.stats())
+	case parts[0] == "_parked":
+		// Entries a destination gave up on: list them, replay one (after
+		// mending what refused it), or drop one. Admins only.
+		if rq.p == nil || !rq.p.Admin {
+			return errForbidden
+		}
+		switch m {
+		case http.MethodGet:
+			return writeJSON(rq, http.StatusOK, map[string]any{"data": a.Reg.ParkedEntries()})
+		case http.MethodPost, http.MethodDelete:
+			var in struct {
+				Listener string `json:"listener"`
+				Position int64  `json:"position"`
+			}
+			if err := json.NewDecoder(http.MaxBytesReader(rq.w, rq.r.Body, 1<<16)).Decode(&in); err != nil || in.Listener == "" || in.Position <= 0 {
+				return errStatus(http.StatusBadRequest, "body must be {listener, position}")
+			}
+			if m == http.MethodDelete {
+				if !a.Reg.Unpark(in.Listener, changelog.Position(in.Position)) {
+					return errNotFound
+				}
+				rq.w.WriteHeader(http.StatusNoContent)
+				return nil
+			}
+			if err := a.Reg.Replay(rq.ctx(), in.Listener, changelog.Position(in.Position)); err != nil {
+				return errStatus(http.StatusUnprocessableEntity, "the destination refused it again: "+err.Error())
+			}
+			rq.w.WriteHeader(http.StatusNoContent)
+			return nil
+		}
+		return errStatus(http.StatusMethodNotAllowed, "GET, POST or DELETE")
 	case parts[0] == "_cache" && m == http.MethodDelete:
 		if rq.p == nil || !rq.p.Admin {
 			return errForbidden
@@ -327,6 +359,7 @@ func (a *App) stats() map[string]any {
 	if a.Reg.View != nil {
 		out["view"] = a.Reg.View.Stats()
 	}
+	out["parked"] = len(a.Reg.ParkedEntries())
 	ls := map[string]any{}
 	for name, l := range a.Reg.Listeners {
 		info := map[string]any{"caps": l.Caps()}

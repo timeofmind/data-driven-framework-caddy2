@@ -220,6 +220,9 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		Logger: cfg.Logger,
 		Resolve: func(ctx context.Context, class string, id int64) (map[string]any, error) {
 			rec, err := reg.MustClass(class).Load(ctx, id)
+			if errors.Is(err, runtime.ErrNotFound) {
+				return nil, hooks.ErrGone
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -236,6 +239,9 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		Children: func(ctx context.Context, class string, id int64, rel string) ([]map[string]any, error) {
 			h := reg.MustClass(class)
 			rec, err := h.Load(ctx, id)
+			if errors.Is(err, runtime.ErrNotFound) {
+				return nil, hooks.ErrGone
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -627,7 +633,7 @@ func recordOutcome(reg *runtime.Registry) func(ctx context.Context, class string
 		h := reg.MustClass(class)
 		rec, err := h.Load(ctx, id)
 		if errors.Is(err, runtime.ErrNotFound) {
-			return nil // the record was deleted before its answer landed: nothing to record, and the listener must not wedge retrying
+			return hooks.ErrGone // deleted before its answer landed: the listener skips it
 		}
 		if err != nil {
 			return err
@@ -637,7 +643,16 @@ func recordOutcome(reg *runtime.Registry) func(ctx context.Context, class string
 				rec.Values[k] = v
 			}
 		}
-		return h.Save(ctx, rec)
+		err = h.Save(ctx, rec)
+		// The model refusing the outcome (a rule, a kept slot) will refuse it
+		// again however often it is delivered: say so, and the entry is parked
+		// instead of holding the destination's queue.
+		var fe runtime.FieldErrors
+		var ke *runtime.KeepError
+		if errors.As(err, &fe) || errors.As(err, &ke) {
+			return listener.Permanently(err)
+		}
+		return err
 	}
 }
 
