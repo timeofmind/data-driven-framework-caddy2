@@ -47,6 +47,11 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   priority order — Claude, OpenAI, Kimi — until one answers; the answer is saved onto
   the record through the normal save path, so it is pushed to pages and the model's
   triggers carry it on. The cluster's leader asks; API keys come from the environment.
+- **Read your writes across the nodes**: every answer sets a `dd_seen` cookie with the
+  newest change this node had applied, and every request waits (briefly) for the version
+  the browser carries — so a page or API read a load balancer sends to the other node is
+  never older than the browser's last write; the JSON API also takes `_seen` and answers
+  `_version` / `X-DD-Version`.
 - **Shops**: the framework's `shipping` and `paypal` listeners (a test mode that charges
   nothing), receipts by mail on an update, and the cart library served at `/_dd/cart.js`
   are wired here like mail: any listener taking hooks gets the app's records, their

@@ -410,6 +410,20 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		path = "/"
 	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
+	// Read your writes across the nodes: the browser carries the newest
+	// version it was answered with (the seen cookie), and a node that has not
+	// applied it yet waits before answering — so a page or an API read that a
+	// load balancer sends to the other node is never older than the last
+	// write this browser made. The cookie is set as each answer goes out,
+	// with what this node had applied by then.
+	if a.Reg.View != nil && parts[0] != "static" && parts[0] != "_dd" {
+		if c, err := r.Cookie(seenCookie); err == nil {
+			if seen, _ := strconv.ParseInt(c.Value, 10, 64); seen > 0 {
+				a.Reg.View.WaitApplied(r.Context(), seen, 1500*time.Millisecond)
+			}
+		}
+		w = &seenWriter{ResponseWriter: w, app: a}
+	}
 	rq := &request{app: a, w: w, r: r}
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
@@ -469,6 +483,39 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 	}
 	return true
 }
+
+// seenCookie carries the newest applied version a browser was answered with.
+const seenCookie = "dd_seen"
+
+// seenWriter sets the seen cookie as the answer's headers go out, to the
+// version this node has applied by then — after the request's own writes.
+type seenWriter struct {
+	http.ResponseWriter
+	app  *App
+	done bool
+}
+
+func (s *seenWriter) stamp() {
+	if s.done {
+		return
+	}
+	s.done = true
+	if v := s.app.Reg.View.AppliedVersion(); v > 0 {
+		http.SetCookie(s.ResponseWriter, &http.Cookie{Name: seenCookie, Value: strconv.FormatInt(v, 10), Path: s.app.cookiePath(),
+			HttpOnly: true, Secure: s.app.cfg.SecureCookies, SameSite: http.SameSiteLaxMode, MaxAge: 86400})
+	}
+}
+
+func (s *seenWriter) WriteHeader(code int) { s.stamp(); s.ResponseWriter.WriteHeader(code) }
+
+func (s *seenWriter) Write(b []byte) (int, error) {
+	s.stamp()
+	return s.ResponseWriter.Write(b)
+}
+
+// Unwrap lets http.ResponseController reach the flusher beneath (the live
+// event streams).
+func (s *seenWriter) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // request carries per-request state.
 type request struct {
