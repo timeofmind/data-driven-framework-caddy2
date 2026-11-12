@@ -626,6 +626,9 @@ func recordOutcome(reg *runtime.Registry) func(ctx context.Context, class string
 	return func(ctx context.Context, class string, id int64, values map[string]any) error {
 		h := reg.MustClass(class)
 		rec, err := h.Load(ctx, id)
+		if errors.Is(err, runtime.ErrNotFound) {
+			return nil // the record was deleted before its answer landed: nothing to record, and the listener must not wedge retrying
+		}
 		if err != nil {
 			return err
 		}
