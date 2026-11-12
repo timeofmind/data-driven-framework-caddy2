@@ -532,7 +532,11 @@ type request struct {
 func (rq *request) ctx() context.Context { return rq.r.Context() }
 
 func (a *App) webRequest(rq *request) *webux.Request {
-	return &webux.Request{W: rq.w, R: rq.r, Viewer: rq.p, CSRF: rq.csrf, Base: a.cfg.BasePath, Session: rq.session}
+	wr := &webux.Request{W: rq.w, R: rq.r, Viewer: rq.p, CSRF: rq.csrf, Base: a.cfg.BasePath, Session: rq.session}
+	if a.guestsOffered() {
+		wr.Guest = func() (*runtime.Principal, error) { return a.newGuest(rq) }
+	}
+	return wr
 }
 
 // httpError is returned by handlers to produce an error page or JSON error.
@@ -562,6 +566,10 @@ func (a *App) wrap(rq *request, fn func(*request) error) {
 			return
 		}
 		a.renderError(rq, errStatus(http.StatusForbidden, "Your form expired. Go back, reload the page and try again."))
+		return
+	}
+	if rq.r.Method == http.MethodPost && rq.p != nil && rq.p.Guest && a.rateLimited(rq, "guest-write", 60, time.Hour) {
+		a.renderError(rq, errStatus(http.StatusTooManyRequests, "Too many changes from your network. Please try again later."))
 		return
 	}
 	if err := fn(rq); err != nil {

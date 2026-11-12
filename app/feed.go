@@ -34,7 +34,7 @@ func (a *App) feedPath() string {
 
 // feedPage shows the person's private feed URL and resets it on POST.
 func (a *App) feedPage(rq *request) error {
-	if err := a.requireLogin(rq); err != nil {
+	if err := a.requireAccount(rq); err != nil {
 		return err
 	}
 	tok, err := a.feedToken(rq.ctx(), rq.p.ID, rq.r.Method == http.MethodPost)

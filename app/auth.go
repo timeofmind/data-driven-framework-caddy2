@@ -17,10 +17,19 @@ func (a *App) signup(rq *request) error {
 	c := a.auth.Class
 	au := c.Auth
 	rec := a.auth.New(nil)
+	next := safeNext(rq.r.FormValue("next"), a.cfg.BasePath)
 	var errs runtime.FieldErrors
 	if rq.r.Method == http.MethodPost {
 		if a.rateLimited(rq, "signup", 5, time.Hour) {
 			return errStatus(http.StatusTooManyRequests, "Too many sign-ups from your network. Please try again later.")
+		}
+		// A guest signing up: their row becomes the account, and what they
+		// own (a cart) stays theirs.
+		if rq.p != nil && rq.p.Guest {
+			if g, err := a.auth.Load(rq.ctx(), rq.p.ID); err == nil {
+				rec = g
+				rec.Values[au.Guest] = nil
+			}
 		}
 		f := rq.r.PostForm
 		in := map[string]any{
@@ -53,7 +62,9 @@ func (a *App) signup(rq *request) error {
 					return err
 				}
 				a.log.Info("signup", "id", rec.ID())
-				next := a.Pages.RecordURL(a.cfg.BasePath, c.Name, rec.ID())
+				if next == "" {
+					next = a.Pages.RecordURL(a.cfg.BasePath, c.Name, rec.ID())
+				}
 				if next == "" {
 					next = a.url("/")
 				}
@@ -93,7 +104,7 @@ func (a *App) signup(rq *request) error {
 		fields = append(fields, ff)
 	}
 	a.site.Render(a.webRequest(rq), "signup", "Create your account", map[string]any{
-		"Fields": fields, "Message": ux.GeneralError(errs), "Intro": a.man.Signup.Intro})
+		"Fields": fields, "Message": ux.GeneralError(errs), "Intro": a.man.Signup.Intro, "Next": next})
 	return nil
 }
 
@@ -107,6 +118,9 @@ func (a *App) login(rq *request) error {
 		}
 		rec, err := a.Reg.Authenticate(rq.ctx(), rq.r.PostFormValue("login"), rq.r.PostFormValue("password"))
 		if err == nil {
+			if err := a.adoptGuest(rq, rec.ID()); err != nil { // a guest's cart comes along
+				return err
+			}
 			if err := a.startSession(rq, rec.ID()); err != nil {
 				return err
 			}
@@ -137,7 +151,7 @@ func (a *App) logout(rq *request) error {
 
 // me goes to the signed-in person's own page.
 func (a *App) me(rq *request) error {
-	if err := a.requireLogin(rq); err != nil {
+	if err := a.requireAccount(rq); err != nil {
 		return err
 	}
 	u := a.Pages.RecordURL(a.cfg.BasePath, a.auth.Class.Name, rq.p.ID)
@@ -148,12 +162,14 @@ func (a *App) me(rq *request) error {
 	return nil
 }
 
+// safeNext is where to go after signing in or up: a path of this site
+// (given with or without the base path), or "".
 func safeNext(next, base string) string {
 	if next == "" || !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.Contains(next, "\\") {
 		return ""
 	}
-	if base != "" && !strings.HasPrefix(next, base) {
-		return ""
+	if base != "" && next != base && !strings.HasPrefix(next, base+"/") && !strings.HasPrefix(next, base+"?") {
+		next = base + next
 	}
 	return next
 }

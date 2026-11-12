@@ -1,0 +1,9 @@
+# A visitor may draft a route before joining: the server makes a guest of
+# them on the first one (Member's auth: guest; Route's access: guests).
+path: /c/routes/guest
+title: Draft a route
+interface_views:
+  - type: form
+    creates: Route
+    fields: [name, distance_km]
+    cancel: {page: routes}

@@ -25,7 +25,15 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   account route or API claims fall through to the next handler.
 - **Accounts** for the model's `auth` class: sign-up, sign-in, sessions, `/me` (the
   signed-in person's page: their class's `default_for` page), and account deletion
-  (a detail view's delete on their own record ends every session).
+  (a detail view's delete on their own record ends every session). `/signup` and
+  `/login` take `next` (a path of the site, with or without the base path).
+- **Guests**, when the auth class names a `guest` slot: a visitor who creates a row
+  where the class says `access: guests` (a cart) is given a guest row (display "Guest")
+  and a session on the spot — by a page's form or by `POST /api/v1/<class>`. Signing up
+  fills that row in (the cart stays); signing in moves the guest's rows to the account
+  (`runtime.Registry.Adopt`) and removes the guest. Guests are not signed in: `/me`,
+  feeds and `access: signed_in` pages turn them away; `GET /api/v1/me` says `guest:
+  true`.
 - **The model's access rules**, applied to every page, list, choice and API call
   (by the framework).
 - **The scripts** web-ux builds — the model's rules for forms, calendar drag, list
@@ -147,7 +155,8 @@ ascent_m, avg_hr, max_hr`. Readers are pluggable (`importer.Register`).
   owner's groupmates only; values hidden by `private_when` are left out of responses.
 - CSRF: double-submit token on every form; API writes need `X-CSRF-Token`
   (from `GET /api/v1/me`).
-- Rate limits per client IP on sign-up, sign-in and uploads.
+- Rate limits per client IP on sign-up, sign-in, uploads, new guests (20/hour) and guests'
+  writes (60/hour).
 - Strict Content-Security-Policy (only the site's own scripts; no inline script, no
   eval), `nosniff`, `frame-ancestors 'none'`.
 - Every page write is declared by its interface view and enforced: a form writes only

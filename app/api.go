@@ -34,6 +34,9 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 	if unsafe && !a.checkCSRF(rq, rq.r.Header.Get("X-CSRF-Token")) {
 		return errStatus(http.StatusForbidden, "missing or invalid X-CSRF-Token header")
 	}
+	if unsafe && rq.p != nil && rq.p.Guest && a.rateLimited(rq, "guest-write", 60, time.Hour) {
+		return errStatus(http.StatusTooManyRequests, "too many changes from your network; try again later")
+	}
 	// A read that names the newest version the client has seen (_seen, as a
 	// page's redraw does): this node waits to have applied it, so a read after
 	// a write — on any node of the cluster — is never older than the write.
@@ -54,9 +57,9 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 		rq.w.Write(b)
 		return nil
 	case len(parts) == 1 && parts[0] == "me":
-		out := map[string]any{"authenticated": rq.p != nil, "csrf_token": rq.csrf}
+		out := map[string]any{"authenticated": rq.p != nil, "csrf_token": rq.csrf, "guests": a.guestsOffered()}
 		if rq.p != nil {
-			out["id"], out["name"], out["admin"] = rq.p.ID, rq.p.Name, rq.p.Admin
+			out["id"], out["name"], out["admin"], out["guest"] = rq.p.ID, rq.p.Name, rq.p.Admin, rq.p.Guest
 		}
 		return writeJSON(rq, http.StatusOK, out)
 	case len(parts) == 1 && parts[0] == "upload" && a.uploads != nil:
@@ -249,10 +252,15 @@ func (a *App) apiList(rq *request) error {
 }
 
 func (a *App) apiSave(rq *request, rec *runtime.Record, status int) error {
+	c := rq.handle.Class
+	if rec == nil && rq.p == nil && a.guestsOffered() && runtime.GuestsMay(c) {
+		if _, err := a.newGuest(rq); err != nil { // a visitor's first cart makes them a guest
+			return err
+		}
+	}
 	if err := a.requireLogin(rq); err != nil {
 		return err
 	}
-	c := rq.handle.Class
 	if rec == nil {
 		if !runtime.CanCreate(c, rq.p) {
 			return errForbidden
