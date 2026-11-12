@@ -273,6 +273,13 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 			if d := t.Dir(); d != "" && !filepath.IsAbs(d) {
 				t.SetDir(filepath.Join(cfg.AppDir, d)) // the app's mail/ or llm/ directory
 			}
+			// Every routed class's template must load now, not at the first delivery.
+			if t, ok := l.(interface{ CheckTemplates() error }); ok {
+				if err := t.CheckTemplates(); err != nil {
+					cancel()
+					return nil, err
+				}
+			}
 		}
 		if ml, ok := l.(*mail.Listener); ok {
 			if ml.BaseURL() == "" {

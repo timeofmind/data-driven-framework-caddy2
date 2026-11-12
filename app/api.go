@@ -326,8 +326,8 @@ func (a *App) apiSave(rq *request, rec *runtime.Record, status int) error {
 	// AssignFor then takes only the owner, the party and write: party fields.
 	if !a.Reg.PartyCreating(rq.ctx(), rec, rq.p, in) {
 		for k := range in {
-			if s := c.Slot(k); s == nil || !runtime.SlotSettable(rec, s, role) || k == ownerOf(c) {
-				delete(in, k) // read-only, admin- or party-only (for others), unknown and owner fields are ignored, as in forms
+			if s := c.Slot(k); s == nil || s.APIReadOnly || !runtime.SlotSettable(rec, s, role) || k == ownerOf(c) {
+				delete(in, k) // read-only (and api_read_only), admin- or party-only (for others), unknown and owner fields are ignored, as in forms
 			}
 		}
 	}

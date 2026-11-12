@@ -103,6 +103,20 @@ func (a *App) liveEvent(ctx context.Context, p *runtime.Principal, sc ux.LiveSco
 				return nil
 			}
 		}
+		// Only a viewer who could see the record is told it went, by its last
+		// values; when memory no longer held them, the view is told something
+		// changed without the id, so nothing is revealed.
+		if n.Last == nil {
+			ev["id"] = 0
+			return ev
+		}
+		last := runtime.NewRecord(h.Class, n.Last)
+		if !query.Match(query.Query{Where: sc.Where}, last.Values) && !mayHaveLeft(sc.Where, n) {
+			return nil
+		}
+		if ok, _ := a.Reg.Readable(ctx, last, p); !ok {
+			return nil
+		}
 		return ev
 	}
 	rec, err := h.Load(ctx, n.ID)

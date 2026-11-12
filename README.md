@@ -155,8 +155,12 @@ ascent_m, avg_hr, max_hr`. Readers are pluggable (`importer.Register`).
   owner's groupmates only; values hidden by `private_when` are left out of responses.
 - CSRF: double-submit token on every form; API writes need `X-CSRF-Token`
   (from `GET /api/v1/me`).
-- Rate limits per client IP on sign-up, sign-in, uploads, new guests (20/hour) and guests'
-  writes (60/hour).
+- Rate limits per client IP on sign-up, sign-in, uploads, new guests and guests' writes
+  (`app.yaml` `guests: {per_hour: 20, writes_per_hour: 60, display: Guest, keep_for: 30d}`;
+  idle guests are swept after `keep_for` with what they own).
+- Every API answer carries `X-CSRF-Token`; a visitor becoming a guest keeps their token.
+- `GET/POST/DELETE /api/v1/_parked` (admins): entries a destination gave up on — list,
+  replay one after mending what refused it, or drop it; `_stats` counts them.
 - Strict Content-Security-Policy (only the site's own scripts; no inline script, no
   eval), `nosniff`, `frame-ancestors 'none'`.
 - Every page write is declared by its interface view and enforced: a form writes only
