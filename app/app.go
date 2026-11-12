@@ -574,7 +574,7 @@ func (a *App) wrap(rq *request, fn func(*request) error) {
 		a.renderError(rq, errStatus(http.StatusForbidden, "Your form expired. Go back, reload the page and try again."))
 		return
 	}
-	if rq.r.Method == http.MethodPost && rq.p != nil && rq.p.Guest && a.rateLimited(rq, "guest-write", 60, time.Hour) {
+	if rq.r.Method == http.MethodPost && rq.p != nil && rq.p.Guest && a.rateLimited(rq, "guest-write", a.man.guestWritesPerHour(), time.Hour) {
 		a.renderError(rq, errStatus(http.StatusTooManyRequests, "Too many changes from your network. Please try again later."))
 		return
 	}
@@ -664,16 +664,20 @@ func randomToken() string {
 	return hex.EncodeToString(b)
 }
 
-func (a *App) startSession(rq *request, principalID int64) error {
+// startSession begins a session for a principal. rotate renews the CSRF
+// token too — at a sign-in or sign-up, where the privilege changes; not when a
+// visitor becomes a guest, so a client's token stays good across that write.
+func (a *App) startSession(rq *request, principalID int64, rotate bool) error {
 	tok, err := a.newSession(rq.ctx(), principalID)
 	if err != nil {
 		return err
 	}
 	http.SetCookie(rq.w, &http.Cookie{Name: sessionCookie, Value: tok, Path: a.cookiePath(), HttpOnly: true,
 		Secure: a.cfg.SecureCookies, SameSite: http.SameSiteLaxMode, MaxAge: int(a.cfg.SessionTTL.Seconds())})
-	// Rotate the CSRF token at login.
-	rq.csrf = randomToken()
-	a.setCSRFCookie(rq)
+	if rotate {
+		rq.csrf = randomToken()
+		a.setCSRFCookie(rq)
+	}
 	rq.session = tokenHash(tok)
 	return nil
 }

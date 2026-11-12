@@ -24,6 +24,9 @@ func (a *App) api(rq *request, parts []string) {
 	a.resolveSession(rq)
 	a.ensureCSRF(rq)
 	rq.w.Header().Set("Cache-Control", "no-store")
+	// Every answer says the token unsafe requests must carry, so a client
+	// learns it (or a change of it at sign-in) without a round trip to /me.
+	rq.w.Header().Set("X-CSRF-Token", rq.csrf)
 	if err := a.apiRoute(rq, parts); err != nil {
 		a.apiError(rq, err)
 	}
@@ -35,7 +38,7 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 	if unsafe && !a.checkCSRF(rq, rq.r.Header.Get("X-CSRF-Token")) {
 		return errStatus(http.StatusForbidden, "missing or invalid X-CSRF-Token header")
 	}
-	if unsafe && rq.p != nil && rq.p.Guest && a.rateLimited(rq, "guest-write", 60, time.Hour) {
+	if unsafe && rq.p != nil && rq.p.Guest && a.rateLimited(rq, "guest-write", a.man.guestWritesPerHour(), time.Hour) {
 		return errStatus(http.StatusTooManyRequests, "too many changes from your network; try again later")
 	}
 	// A read that names the newest version the client has seen (_seen, as a

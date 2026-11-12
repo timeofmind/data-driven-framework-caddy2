@@ -58,7 +58,7 @@ func (a *App) signup(rq *request) error {
 				}
 				errs = fe
 			} else {
-				if err := a.startSession(rq, rec.ID()); err != nil {
+				if err := a.startSession(rq, rec.ID(), true); err != nil {
 					return err
 				}
 				a.log.Info("signup", "id", rec.ID())
@@ -118,11 +118,15 @@ func (a *App) login(rq *request) error {
 		}
 		rec, err := a.Reg.Authenticate(rq.ctx(), rq.r.PostFormValue("login"), rq.r.PostFormValue("password"))
 		if err == nil {
-			if err := a.adoptGuest(rq, rec.ID()); err != nil { // a guest's cart comes along
+			guest := rq.p // the guest this browser was, if any
+			if err := a.startSession(rq, rec.ID(), true); err != nil {
 				return err
 			}
-			if err := a.startSession(rq, rec.ID()); err != nil {
-				return err
+			// A guest's rows (a cart) come along, whole or not at all. If that
+			// fails the person is signed in all the same; the guest row and
+			// its rows are left as they were, and the failure is logged.
+			if err := a.adoptGuest(rq, guest, rec.ID()); err != nil {
+				a.log.Error("adopting a guest's rows failed; signed in without them", "guest", guest.ID, "account", rec.ID(), "error", err)
 			}
 			if next == "" {
 				next = a.url("/")

@@ -80,11 +80,12 @@ func (a *App) newSession(ctx context.Context, principalID int64) (string, error)
 	if err := a.sessions().Save(ctx, s); err != nil {
 		return "", err
 	}
-	// Opportunistic cleanup of expired sessions (a few at a time).
+	// Opportunistic cleanup of expired sessions, and of idle guests (a few at a time).
 	old, _ := a.sessions().List(ctx, runtime.Query{Where: []runtime.Cond{{Field: "expires_at", Op: "<", Value: time.Now().UTC().Format(timeLayout)}}, Limit: 20})
 	for _, o := range old {
 		a.sessions().Delete(ctx, o.ID())
 	}
+	a.sweepGuests(ctx)
 	return tok, nil
 }
 

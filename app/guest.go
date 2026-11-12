@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -29,19 +30,19 @@ func (a *App) newGuest(rq *request) (*runtime.Principal, error) {
 	if !a.guestsOffered() {
 		return nil, errStatus(http.StatusUnauthorized, "Please sign in first")
 	}
-	if a.rateLimited(rq, "guest", 20, time.Hour) {
+	if a.rateLimited(rq, "guest", a.man.guestPerHour(), time.Hour) {
 		return nil, errStatus(http.StatusTooManyRequests, "Too many new visitors from your network. Please try again later.")
 	}
 	au := a.auth.Class.Auth
 	rec := a.auth.New(nil)
 	rec.Values[au.Guest] = randomToken()
 	if au.Display != "" {
-		rec.Values[au.Display] = "Guest"
+		rec.Values[au.Display] = a.man.guestDisplay()
 	}
 	if err := a.auth.Save(rq.ctx(), rec); err != nil {
 		return nil, err
 	}
-	if err := a.startSession(rq, rec.ID()); err != nil {
+	if err := a.startSession(rq, rec.ID(), false); err != nil { // the client's CSRF token stays good
 		return nil, err
 	}
 	rq.p = a.principal(rec)
@@ -49,23 +50,50 @@ func (a *App) newGuest(rq *request) (*runtime.Principal, error) {
 	return rq.p, nil
 }
 
-// adoptGuest moves what the guest rq.p owns to the account, ends the
-// guest's sessions and removes the guest row (nothing of theirs is left to
-// cascade). Nothing happens when rq.p is not a guest.
-func (a *App) adoptGuest(rq *request, account int64) error {
-	if rq.p == nil || !rq.p.Guest || rq.p.ID == account {
+// adoptGuest moves what the guest owns to the account and removes the guest
+// row, as one transaction (whole or not at all; nothing of theirs is left
+// to cascade), then ends the guest's sessions. Nothing happens when guest is
+// not a guest.
+func (a *App) adoptGuest(rq *request, guest *runtime.Principal, account int64) error {
+	if guest == nil || !guest.Guest || guest.ID == account {
 		return nil
 	}
-	moved, err := a.Reg.Adopt(rq.ctx(), rq.p.ID, account)
+	moved := 0
+	err := a.Reg.Transact(rq.ctx(), func(ctx context.Context) error {
+		n, err := a.Reg.Adopt(ctx, guest.ID, account)
+		if err != nil {
+			return err
+		}
+		moved = n
+		return a.auth.Delete(ctx, guest.ID)
+	})
 	if err != nil {
 		return err
 	}
-	a.endAllSessions(rq.ctx(), rq.p.ID)
-	if err := a.auth.Delete(rq.ctx(), rq.p.ID); err != nil {
-		return err
-	}
-	a.log.Info("guest adopted", "guest", rq.p.ID, "account", account, "rows", moved)
+	a.endAllSessions(rq.ctx(), guest.ID)
+	a.log.Info("guest adopted", "guest", guest.ID, "account", account, "rows", moved)
 	return nil
+}
+
+// sweepGuests removes a few guests idle for longer than guests.keep_for —
+// their row unchanged that long (a cart change changes it) — with
+// everything they own. Called opportunistically, as expired sessions are.
+func (a *App) sweepGuests(ctx context.Context) {
+	keep, err := a.man.guestKeepFor()
+	if err != nil || keep == 0 || !a.guestsOffered() {
+		return
+	}
+	au := a.auth.Class.Auth
+	cut := time.Now().UTC().Add(-keep).Format(timeLayout)
+	old, _ := a.auth.List(ctx, runtime.Query{Where: []runtime.Cond{{Field: au.Guest, Op: "notnull"}, {Field: "updated_at", Op: "<", Value: cut}}, Limit: 20})
+	for _, g := range old {
+		a.endAllSessions(ctx, g.ID())
+		if err := a.auth.Delete(ctx, g.ID()); err != nil {
+			a.log.Warn("sweeping an idle guest", "id", g.ID(), "error", err)
+		} else {
+			a.log.Info("an idle guest was swept", "id", g.ID(), "idle_since", g.String("updated_at"))
+		}
+	}
 }
 
 // requireAccount is requireLogin for what a guest may not do: their own

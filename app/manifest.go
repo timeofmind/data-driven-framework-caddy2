@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -43,8 +46,60 @@ type Manifest struct {
 		Expires string `yaml:"expires"`
 	} `yaml:"password_reset"`
 	Nav []string `yaml:"nav"`
+	// Guests tunes guests (the auth class's guest slot enables them): the
+	// display name a guest row gets, how many new guests and how many
+	// guests' writes an address may make per hour, and how long an idle
+	// guest (no change to their row) is kept before the sweep removes them
+	// with everything they own ("30d", "720h"; 0 or empty: kept for ever).
+	Guests struct {
+		Display       string `yaml:"display"`
+		PerHour       int    `yaml:"per_hour"`
+		WritesPerHour int    `yaml:"writes_per_hour"`
+		KeepFor       string `yaml:"keep_for"`
+	} `yaml:"guests"`
 
 	dir string
+}
+
+// guestDisplay, guestPerHour, guestWritesPerHour, guestKeepFor: the guest
+// policy with its defaults.
+func (m *Manifest) guestDisplay() string {
+	if m.Guests.Display != "" {
+		return m.Guests.Display
+	}
+	return "Guest"
+}
+func (m *Manifest) guestPerHour() int {
+	if m.Guests.PerHour > 0 {
+		return m.Guests.PerHour
+	}
+	return 20
+}
+func (m *Manifest) guestWritesPerHour() int {
+	if m.Guests.WritesPerHour > 0 {
+		return m.Guests.WritesPerHour
+	}
+	return 60
+}
+
+// guestKeepFor parses keep_for: a Go duration, or days as "30d".
+func (m *Manifest) guestKeepFor() (time.Duration, error) {
+	v := strings.TrimSpace(m.Guests.KeepFor)
+	if v == "" {
+		return 0, nil
+	}
+	if strings.HasSuffix(v, "d") {
+		n, err := strconv.Atoi(strings.TrimSuffix(v, "d"))
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("guests.keep_for: %q", v)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("guests.keep_for: %q", v)
+	}
+	return d, nil
 }
 
 // LoadManifest reads <dir>/app.yaml. Unknown keys are errors.

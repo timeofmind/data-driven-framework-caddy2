@@ -167,7 +167,7 @@ func (a *App) reset(rq *request) error {
 				return err
 			}
 			a.log.Info("password reset", "account", acct.ID())
-			if err := a.startSession(rq, acct.ID()); err != nil {
+			if err := a.startSession(rq, acct.ID(), true); err != nil {
 				return err
 			}
 			http.Redirect(rq.w, rq.r, a.url("/"), http.StatusSeeOther)
@@ -217,6 +217,9 @@ func (a *App) resetClassOK() error {
 		if _, err := time.ParseDuration(a.man.PasswordReset.Expires); err != nil {
 			return fmt.Errorf("password_reset: expires: %w", err)
 		}
+	}
+	if _, err := a.man.guestKeepFor(); err != nil {
+		return err
 	}
 	return nil
 }
