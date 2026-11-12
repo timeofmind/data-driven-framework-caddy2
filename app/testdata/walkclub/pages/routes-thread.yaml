@@ -1,0 +1,12 @@
+# The routes as a conversation (style: thread): one item per row, the first
+# field as the viewer's own line, the rest as replies — the presentation a
+# chat (a question and its answer) is drawn with.
+path: /c/routes/thread
+title: Routes, as a thread
+interface_views:
+  - type: list
+    name: thread
+    style: thread
+    data: {class: Route}
+    fields: [name, distance_km, visibility]
+    live: push

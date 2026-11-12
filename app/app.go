@@ -101,6 +101,9 @@ type App struct {
 	loc     *time.Location
 	signer  *ux.Signer
 	cancel  context.CancelFunc
+	// liveMemo: what checking a change for the event streams cost, kept a
+	// moment, shared by every stream (live.go).
+	liveMemo liveMemo
 }
 
 // New loads the model and pages, connects, brings the database up to date
