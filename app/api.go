@@ -1,12 +1,12 @@
 package app
 
 import (
-	"github.com/timeofmind/data-driven-framework-go/listener"
 	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/timeofmind/data-driven-framework-go/changelog"
+	"github.com/timeofmind/data-driven-framework-go/listener"
 	"net/http"
 	"strconv"
 	"strings"
