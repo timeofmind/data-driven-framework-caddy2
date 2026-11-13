@@ -32,6 +32,7 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/listener/llm"
 	"github.com/timeofmind/data-driven-framework-go/listener/mail"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/paypal"
+	_ "github.com/timeofmind/data-driven-framework-go/listener/s3"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/shipping"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/sql"
 	"github.com/timeofmind/data-driven-framework-go/model"

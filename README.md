@@ -61,6 +61,11 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   listener's loop, which follows the build on the cluster's leader (the `Find` and
   `Leading` hooks find builds under way after a restart) and saves the phase, the
   progress and the preview's address onto the record through the normal save path.
+- **Records as files in a bucket**: a class routed to an `s3` listener (framework
+  `listener/s3`) has each record put into an S3 bucket — Amazon's or a compatible store —
+  as JSON, as one slot's value, or rendered through a template in the app's `s3/`
+  directory (resolved and checked at start like the mail templates); where the object
+  went is saved onto the record.
 - **Read your writes across the nodes**: every answer sets a `dd_seen` cookie with the
   newest change this node had applied, and every request waits (briefly) for the version
   the browser carries — so a page or API read a load balancer sends to the other node is
