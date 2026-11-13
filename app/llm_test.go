@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/timeofmind/data-driven-framework-go/listener"
 	"github.com/timeofmind/data-driven-framework-go/listener/llm"
 )
 
@@ -80,7 +81,7 @@ prompt: "Name a {{.route.distance_km}} km route for {{.member.name}}."
 	a, _ := newTestAppAt(t, dir)
 	var ll *llm.Listener
 	for _, l := range a.Reg.Listeners {
-		if x, ok := l.(*llm.Listener); ok {
+		if x, ok := listener.Unwrap(l).(*llm.Listener); ok {
 			ll = x
 		}
 	}

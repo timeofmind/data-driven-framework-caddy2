@@ -103,6 +103,8 @@ type App struct {
 	loc     *time.Location
 	signer  *ux.Signer
 	cancel  context.CancelFunc
+	bg      context.Context // the app's lifetime, for what a listener runs in the background
+	hooks   hooks.Hooks     // what a destination takes from the app (readyListener)
 	// liveMemo: what checking a change for the event streams cost, kept a
 	// moment, shared by every stream (live.go).
 	liveMemo liveMemo
@@ -187,6 +189,9 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	} else if len(added) > 0 {
 		cfg.Logger.Info("added record versions", "tables", added)
 	}
+	// The settings admins stored on the Service Configuration page: the
+	// destinations that have some are opened again with them.
+	reopenStored(ctx, reg, cfg.TokenKey, cfg.Logger)
 	if !cfg.NoView {
 		reg.EnableView()
 	}
@@ -285,75 +290,30 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		},
 		Leading: reg.Leading,
 	}
-	for _, l := range reg.Listeners {
-		if h, ok := l.(hooks.Hooked); ok {
-			h.SetHooks(appHooks)
-		}
-		if t, ok := l.(hooks.Templated); ok {
-			if d := t.Dir(); d != "" && !filepath.IsAbs(d) {
-				t.SetDir(filepath.Join(cfg.AppDir, d)) // the app's mail/ or llm/ directory
-			}
-			// Every routed class's template must load now, not at the first delivery.
-			if t, ok := l.(interface{ CheckTemplates() error }); ok {
-				if err := t.CheckTemplates(); err != nil {
-					cancel()
-					return nil, err
-				}
-			}
-		}
-		if ml, ok := l.(*mail.Listener); ok {
-			if ml.BaseURL() == "" {
-				ml.SetBaseURL(cfg.BaseURL)
-			}
-			if tc := ml.TemplateClass; tc != "" {
-				if reg.Model.Class(tc) == nil {
-					cancel()
-					reg.Close()
-					return nil, fmt.Errorf("mail listener %s: template_class %s is not in the model", ml.Name(), tc)
-				}
-				ml.Lookup = func(ctx context.Context, name string) (*mail.Template, error) {
-					recs, err := reg.MustClass(tc).List(ctx, runtime.Query{Where: []runtime.Cond{runtime.Eq("name", name)}, Limit: 1})
-					if err != nil || len(recs) == 0 {
-						return nil, err
-					}
-					r := recs[0]
-					return mail.NewTemplate(r.String("to"), r.String("subject"), r.String("body"), r.String("vars"))
-				}
-			}
-		}
-		if ab, ok := l.(*appbuilder.Listener); ok {
-			ab.Start(bg) // follows the builds under way; on the leader alone
-		}
-		if ll, ok := l.(*llm.Listener); ok {
-			if tc := ll.TemplateClass; tc != "" {
-				if reg.Model.Class(tc) == nil {
-					cancel()
-					reg.Close()
-					return nil, fmt.Errorf("llm listener %s: template_class %s is not in the model", ll.Name(), tc)
-				}
-				ll.Lookup = func(ctx context.Context, name string) (*llm.Template, error) {
-					recs, err := reg.MustClass(tc).List(ctx, runtime.Query{Where: []runtime.Cond{runtime.Eq("name", name)}, Limit: 1})
-					if err != nil || len(recs) == 0 {
-						return nil, err
-					}
-					r := recs[0]
-					return llm.NewTemplate(r.String("system"), r.String("prompt"), r.String("model"), int(r.Int("max_tokens")), r.Bool("json"), r.String("vars"))
-				}
-			}
-		}
-	}
 	key := cfg.TokenKey
 	if len(key) == 0 {
 		key = []byte(randomToken())
 	}
 	a := &App{cfg: cfg, man: man, Model: m, Reg: reg, Pages: pages, bySlug: map[string]*runtime.Handle{},
-		limiter: newLimiter(), log: cfg.Logger, admins: map[string]bool{}, loc: loc, cancel: cancel}
+		limiter: newLimiter(), log: cfg.Logger, admins: map[string]bool{}, loc: loc, cancel: cancel, bg: bg, hooks: appHooks}
 	for _, ad := range cfg.Admins {
 		if ad = strings.ToLower(strings.TrimSpace(ad)); ad != "" {
 			a.admins[ad] = true
 		}
 	}
 	a.signer = ux.NewSigner(key)
+	for _, l := range reg.Listeners {
+		if err := a.readyListener(listener.Unwrap(l)); err != nil {
+			cancel()
+			reg.Close()
+			return nil, err
+		}
+	}
+	if p, _ := pages.Match(servicesPath); p != nil {
+		cancel()
+		reg.Close()
+		return nil, fmt.Errorf("%s: the path %s is the server's own (Service Configuration)", p.File, servicesPath)
+	}
 	for _, n := range reg.ClassNames() {
 		if frameworkClass(n) {
 			continue
@@ -399,6 +359,65 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	return a, nil
 }
 
+// readyListener prepares a listener as the app needs it, at the start and
+// again when an admin configures one on the Service Configuration page:
+// the hooks a destination answers records through, its template directory
+// (every routed class's template must load now, not at the first
+// delivery), the templates kept in a class, and what a builder follows.
+func (a *App) readyListener(l listener.Listener) error {
+	cfg, reg := a.cfg, a.Reg
+	if h, ok := l.(hooks.Hooked); ok {
+		h.SetHooks(a.hooks)
+	}
+	if t, ok := l.(hooks.Templated); ok {
+		if d := t.Dir(); d != "" && !filepath.IsAbs(d) {
+			t.SetDir(filepath.Join(cfg.AppDir, d)) // the app's mail/ or llm/ directory
+		}
+		if t, ok := l.(interface{ CheckTemplates() error }); ok {
+			if err := t.CheckTemplates(); err != nil {
+				return err
+			}
+		}
+	}
+	if ml, ok := l.(*mail.Listener); ok {
+		if ml.BaseURL() == "" {
+			ml.SetBaseURL(cfg.BaseURL)
+		}
+		if tc := ml.TemplateClass; tc != "" {
+			if reg.Model.Class(tc) == nil {
+				return fmt.Errorf("mail listener %s: template_class %s is not in the model", ml.Name(), tc)
+			}
+			ml.Lookup = func(ctx context.Context, name string) (*mail.Template, error) {
+				recs, err := reg.MustClass(tc).List(ctx, runtime.Query{Where: []runtime.Cond{runtime.Eq("name", name)}, Limit: 1})
+				if err != nil || len(recs) == 0 {
+					return nil, err
+				}
+				r := recs[0]
+				return mail.NewTemplate(r.String("to"), r.String("subject"), r.String("body"), r.String("vars"))
+			}
+		}
+	}
+	if ab, ok := l.(*appbuilder.Listener); ok {
+		ab.Start(a.bg) // follows the builds under way; on the leader alone
+	}
+	if ll, ok := l.(*llm.Listener); ok {
+		if tc := ll.TemplateClass; tc != "" {
+			if reg.Model.Class(tc) == nil {
+				return fmt.Errorf("llm listener %s: template_class %s is not in the model", ll.Name(), tc)
+			}
+			ll.Lookup = func(ctx context.Context, name string) (*llm.Template, error) {
+				recs, err := reg.MustClass(tc).List(ctx, runtime.Query{Where: []runtime.Cond{runtime.Eq("name", name)}, Limit: 1})
+				if err != nil || len(recs) == 0 {
+					return nil, err
+				}
+				r := recs[0]
+				return llm.NewTemplate(r.String("system"), r.String("prompt"), r.String("model"), int(r.Int("max_tokens")), r.Bool("json"), r.String("vars"))
+			}
+		}
+	}
+	return nil
+}
+
 // openRegistry binds the model to the app's routing files, or, without any,
 // to the one database the server configures.
 func openRegistry(m *model.Model, man *Manifest, cfg Config) (*runtime.Registry, error) {
@@ -410,7 +429,11 @@ func openRegistry(m *model.Model, man *Manifest, cfg Config) (*runtime.Registry,
 	if err != nil {
 		return nil, err
 	}
-	return runtime.OpenRouted(m, rt)
+	// A destination the routing names without all its settings (a bucket
+	// without its keys) is not a failed start: it waits, parking what flows
+	// to it, for an admin to configure it on the Service Configuration page
+	// — or for the settings stored there already (reopenStored).
+	return runtime.OpenRoutedWith(m, rt, runtime.OpenOptions{Unconfigured: true, Logger: cfg.Logger})
 }
 
 // Close stops the delivery loops and releases the listeners and the log.
@@ -471,11 +494,15 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 	switch {
 	case parts[0] == "static" && len(parts) >= 2:
 		a.site.ServeStatic(a.webRequest(rq), strings.Join(parts[1:], "/"))
+	case path == "/_dd/admin" && a.auth != nil:
+		a.wrap(rq, a.adminLink)
 	case parts[0] == "_dd" && len(parts) == 2:
 		if !a.site.ServeScript(a.webRequest(rq), parts[1]) {
 			http.NotFound(w, r)
 		}
-	case path == "/signup" && a.auth != nil && a.man.signupEnabled():
+	case path == servicesPath:
+		a.wrap(rq, a.services)
+	case path == "/signup" && a.auth != nil && (a.man.signupEnabled() || a.adminSignup(rq) != ""):
 		a.wrap(rq, a.signup)
 	case path == "/login" && a.auth != nil:
 		a.wrap(rq, a.login)

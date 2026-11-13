@@ -18,6 +18,15 @@ func (a *App) signup(rq *request) error {
 	au := c.Auth
 	rec := a.auth.New(nil)
 	next := safeNext(rq.r.FormValue("next"), a.cfg.BasePath)
+	// An admin link's sign-up: the login is the link's, whatever the form
+	// says, and the new account goes to the admin backend.
+	admin := a.adminSignup(rq)
+	if admin != "" {
+		rec.Values[au.Login] = admin
+		if next == "" {
+			next = a.url(servicesPath)
+		}
+	}
 	var errs runtime.FieldErrors
 	if rq.r.Method == http.MethodPost {
 		if a.rateLimited(rq, "signup", 5, time.Hour) {
@@ -35,6 +44,9 @@ func (a *App) signup(rq *request) error {
 		in := map[string]any{
 			au.Login:    strings.ToLower(strings.TrimSpace(f.Get(au.Login))),
 			au.Password: f.Get(au.Password),
+		}
+		if admin != "" {
+			in[au.Login] = admin
 		}
 		if au.Display != "" {
 			in[au.Display] = f.Get(au.Display)
@@ -103,8 +115,12 @@ func (a *App) signup(rq *request) error {
 		}
 		fields = append(fields, ff)
 	}
+	adminTok := ""
+	if admin != "" {
+		adminTok = rq.r.FormValue("_admin")
+	}
 	a.site.Render(a.webRequest(rq), "signup", "Create your account", map[string]any{
-		"Fields": fields, "Message": ux.GeneralError(errs), "Intro": a.man.Signup.Intro, "Next": next})
+		"Fields": fields, "Message": ux.GeneralError(errs), "Intro": a.man.Signup.Intro, "Next": next, "Admin": adminTok})
 	return nil
 }
 

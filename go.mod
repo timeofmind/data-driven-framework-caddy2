@@ -5,7 +5,8 @@ go 1.26.0
 require (
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/muktihari/fit v0.28.5
-	github.com/timeofmind/data-driven-framework-go v0.40.0
+	github.com/spf13/cobra v1.10.2
+	github.com/timeofmind/data-driven-framework-go v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -113,7 +114,6 @@ require (
 	github.com/smallstep/scep v0.0.0-20260331191114-261f960a40d1 // indirect
 	github.com/smallstep/truststore v0.13.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
-	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55 // indirect
 	github.com/tailscale/tscert v0.0.0-20251216020129-aea342f6d747 // indirect

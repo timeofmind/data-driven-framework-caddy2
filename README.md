@@ -47,6 +47,23 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
 - **A directory of listeners** at `GET /api/v1/_listeners`: the listener types the
   framework supports, each with its settings and which are secrets (`listener.Infos`),
   for an admin page offering the services an admin may supply a key for.
+- **An admin backend in every app**, with the **Service Configuration** page at
+  `/admin/services` (admins only; "Admin" in the default layout): the destinations the
+  app's routing names — payments, mail, a bucket, a language model — each with the
+  settings its listener type takes, drawn from the directory. What the routing file
+  leaves out, above all the secrets, an admin supplies here; the values are kept in the
+  framework class `FrameworkServiceSetting` (secrets sealed under `token_key_file`),
+  the listener is opened again with them at once and at every start, and what was parked
+  for it while it waited is delivered. A destination without all its settings no longer
+  keeps the app from starting: it waits, parking what flows to it. An app's own pages
+  may say `access: admin` to sit beside this one. See the framework's
+  `docs/service-configuration.md`.
+- **The admin link** for an app's first admin: `caddy admin-link --token-key FILE
+  --login EMAIL --base-url URL [--ttl 10m]` (or `app.AdminLink`) mints
+  `/_dd/admin?token=…`, signed with the token key and naming one of the `admins`
+  logins; opening it signs that account in, or leads to sign-up with the login fixed —
+  allowed even when sign-up is off — and on to Service Configuration. Good for ten
+  minutes by default, on any node, not single-use.
 - **A JSON API** at `/api/v1/<resource>` for every class, with a generated OpenAPI 3
   document; `read: owner` fields only reach their owner.
 - **Timed triggers**: the model's `at` triggers (a game's clock running out) are fired
@@ -104,6 +121,9 @@ example.com {
 		secure_cookies on|off                         # default on
 		session_ttl    720h
 		uploads        <dir> [25MB]                   # keep originals; per-file limit
+		token_key_file <file>                         # signs form tokens and admin links,
+		                                              # seals the services' secrets; the
+		                                              # same file on every node
 	}
 }
 ```
@@ -114,8 +134,9 @@ the auth class and has `code`, `expires_at` and `used_at`; the record the forgot
 saves flows wherever the routing sends the class — a mail listener with a template
 holding `{{.base_url}}/reset?code={{.record.code}}` — and the answer never says whether
 the account exists), a
-calendar's `/feed`, `/static/…`, `/_dd/…` and `/api/v1/…`; everything else falls
-through to the next handler.
+calendar's `/feed`, `/admin/services`, `/static/…`, `/_dd/…` (scripts, and
+`/_dd/admin` for an admin link) and `/api/v1/…`; everything else falls through to the
+next handler. A page file may not claim `/admin/services`.
 
 ## app.yaml
 
@@ -165,7 +186,13 @@ ascent_m, avg_hr, max_hr`. Readers are pluggable (`importer.Register`).
   membership) may set only its `write: party` fields through the API, and create a row
   for someone else only where the model allows (`party_creates`); others' values for
   those fields are ignored, as in forms. Deletes follow `Registry.Deletable`.
-- `/signup?<login>=…` fills in the login (an invitation's signup link). Rows shared with a team (`access: shared`) are listed and returned to the
+- `/signup?<login>=…` fills in the login (an invitation's signup link); with a valid
+  admin link token in `_admin` the login is the link's and sign-up is allowed even when
+  off. An admin link is an HMAC of the token key naming the login and its expiry, refused
+  for a login not in `admins`.
+- The services' secrets (`/admin/services`) are sealed with AES-GCM under a key derived
+  from `token_key_file` before they are stored, and never shown again; without a token
+  key file the save is refused. Rows shared with a team (`access: shared`) are listed and returned to the
   owner's groupmates only; values hidden by `private_when` are left out of responses.
 - CSRF: double-submit token on every form; API writes need `X-CSRF-Token`
   (from `GET /api/v1/me`).

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/timeofmind/data-driven-framework-go/listener"
 	"github.com/timeofmind/data-driven-framework-go/listener/mail"
 )
 
@@ -40,7 +41,7 @@ routes:
 	a, srv := newTestAppAt(t, dir)
 	var ml *mail.Listener
 	for _, l := range a.Reg.Listeners {
-		if m, ok := l.(*mail.Listener); ok {
+		if m, ok := listener.Unwrap(l).(*mail.Listener); ok {
 			ml = m
 		}
 	}
