@@ -55,6 +55,12 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   priority order — Claude, OpenAI, Kimi — until one answers; the answer is saved onto
   the record through the normal save path, so it is pushed to pages and the model's
   triggers carry it on. The cluster's leader asks; API keys come from the environment.
+- **Apps that build apps**: a class routed to an `appbuilder` listener (framework
+  `listener/appbuilder`) has each new record's description sent to the dd-app-builder
+  API; the entry is confirmed as soon as the API has it, and the handler starts the
+  listener's loop, which follows the build on the cluster's leader (the `Find` and
+  `Leading` hooks find builds under way after a restart) and saves the phase, the
+  progress and the preview's address onto the record through the normal save path.
 - **Read your writes across the nodes**: every answer sets a `dd_seen` cookie with the
   newest change this node had applied, and every request waits (briefly) for the version
   the browser carries — so a page or API read a load balancer sends to the other node is
