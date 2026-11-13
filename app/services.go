@@ -70,6 +70,33 @@ func (a *App) configurable() []string {
 	return out
 }
 
+// settingsOf are a listener type's settings for one listener: a setting
+// named per provider in the directory (the llm listener's <p>_api_key) is
+// expanded for each provider the listener's settings name (providers:
+// "claude, kimi"), and left out when none are named.
+func settingsOf(info listener.Info, settings map[string]string) []listener.Setting {
+	var providers []string
+	for _, p := range strings.Split(settings["providers"], ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			providers = append(providers, p)
+		}
+	}
+	var out []listener.Setting
+	for _, s := range info.Settings {
+		if !strings.Contains(s.Name, "<p>") {
+			out = append(out, s)
+			continue
+		}
+		for _, p := range providers {
+			e := s
+			e.Name = strings.ReplaceAll(s.Name, "<p>", p)
+			e.Doc = strings.TrimRight(s.Doc, ".") + " (the " + p + " provider)."
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 func infosByType() map[string]listener.Info {
 	out := map[string]listener.Info{}
 	for _, i := range listener.Infos(false) {
@@ -172,8 +199,9 @@ func (a *App) serviceViews(ctx context.Context) []serviceView {
 		if err := a.Reg.Unconfigured(name); err != nil {
 			sv.Problem = err.Error()
 		}
+		settings := settingsOf(info, a.Reg.Settings(name))
 		secretOf := map[string]bool{}
-		for _, s := range info.Settings {
+		for _, s := range settings {
 			secretOf[s.Name] = s.Secret
 		}
 		var fixed []string
@@ -188,7 +216,7 @@ func (a *App) serviceViews(ctx context.Context) []serviceView {
 			}
 			sv.Fixed = append(sv.Fixed, fixedSetting{Name: k, Value: v})
 		}
-		for _, s := range info.Settings {
+		for _, s := range settings {
 			if _, inRouting := cfg.Settings[s.Name]; inRouting {
 				continue
 			}
@@ -238,7 +266,7 @@ func (a *App) saveService(rq *request, name string) error {
 	info := infos[cfg.Type]
 	f := rq.r.PostForm
 	ctx := rq.ctx()
-	for _, s := range info.Settings {
+	for _, s := range settingsOf(info, a.Reg.Settings(name)) {
 		if _, inRouting := cfg.Settings[s.Name]; inRouting {
 			continue
 		}

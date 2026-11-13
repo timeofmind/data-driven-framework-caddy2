@@ -35,6 +35,7 @@ func servicesFixture(t *testing.T, signup bool) string {
 listeners:
   db:     {type: sqlite, dsn: %q}
   copies: {type: s3, bucket: club-copies, give_up_after: 1h}
+  coach:  {type: llm, providers: claude, claude_model: claude-haiku-5-5, max_tokens: 50, templates: llm}
 routes:
   default: {source: db, flows_to: [db]}
   Route: {source: db, flows_to: [db, copies]}
@@ -89,6 +90,19 @@ func TestServiceConfiguration(t *testing.T) {
 	if strings.Contains(body, `name="s_bucket"`) {
 		t.Error("a setting the routing file gives is not a field")
 	}
+	// A per-provider setting is offered for each provider the routing names.
+	if !strings.Contains(body, `name="s_claude_api_key"`) || strings.Contains(body, "&lt;p&gt;") || strings.Contains(body, `name="s_claude_model"`) {
+		t.Errorf("the llm listener's settings are expanded by provider:\n%s", body)
+	}
+	if err := a.Reg.Unconfigured("coach"); err == nil || !strings.Contains(err.Error(), "claude_api_key is required") {
+		t.Fatalf("coach waits for its key: %v", err)
+	}
+	if code, body, _ := b.post("/admin/services", url.Values{"listener": {"coach"}, "s_claude_api_key": {"sk-test"}}); code != http.StatusSeeOther {
+		t.Fatalf("save coach: %d\n%s", code, extractAlert(body))
+	}
+	if err := a.Reg.Unconfigured("coach"); err != nil {
+		t.Fatalf("coach configured: %v", err)
+	}
 
 	code, body, loc := b.post("/admin/services", url.Values{"listener": {"copies"}, "s_access_key": {"AKIAEXAMPLE"}, "s_secret_key": {"very-secret-value"}, "s_region": {"us-west-2"}})
 	if code != http.StatusSeeOther {
@@ -108,7 +122,7 @@ func TestServiceConfiguration(t *testing.T) {
 		t.Fatalf("a plain setting is shown, a stored secret offered to forget:\n%s", body)
 	}
 	// Sealed in the database.
-	recs, err := a.Reg.MustClass("FrameworkServiceSetting").List(context.Background(), runtime.Query{Limit: 10})
+	recs, err := a.Reg.MustClass("FrameworkServiceSetting").List(context.Background(), runtime.Query{Where: []runtime.Cond{runtime.Eq("listener", "copies")}, Limit: 10})
 	if err != nil || len(recs) != 3 {
 		t.Fatalf("stored: %d %v", len(recs), err)
 	}
