@@ -27,6 +27,7 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/changelog"
 	"github.com/timeofmind/data-driven-framework-go/generator"
 	"github.com/timeofmind/data-driven-framework-go/listener"
+	"github.com/timeofmind/data-driven-framework-go/listener/appbuilder"
 	"github.com/timeofmind/data-driven-framework-go/listener/hooks"
 	"github.com/timeofmind/data-driven-framework-go/listener/llm"
 	"github.com/timeofmind/data-driven-framework-go/listener/mail"
@@ -267,6 +268,21 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 			return out, nil
 		},
 		Record: recordOutcome(reg),
+		// For a destination that follows work it started (appbuilder: a
+		// build under way): the records to take up again after a restart,
+		// and whether this node leads — its loop runs on the leader alone.
+		Find: func(ctx context.Context, class, slot string, value any) ([]int64, error) {
+			recs, err := reg.MustClass(class).List(ctx, runtime.Query{Where: []runtime.Cond{runtime.Eq(slot, value)}, Limit: 1000})
+			if err != nil {
+				return nil, err
+			}
+			ids := make([]int64, len(recs))
+			for i, r := range recs {
+				ids[i] = r.ID()
+			}
+			return ids, nil
+		},
+		Leading: reg.Leading,
 	}
 	for _, l := range reg.Listeners {
 		if h, ok := l.(hooks.Hooked); ok {
@@ -303,6 +319,9 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 					return mail.NewTemplate(r.String("to"), r.String("subject"), r.String("body"), r.String("vars"))
 				}
 			}
+		}
+		if ab, ok := l.(*appbuilder.Listener); ok {
+			ab.Start(bg) // follows the builds under way; on the leader alone
 		}
 		if ll, ok := l.(*llm.Listener); ok {
 			if tc := ll.TemplateClass; tc != "" {
