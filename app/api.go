@@ -1,6 +1,7 @@
 package app
 
 import (
+	"github.com/timeofmind/data-driven-framework-go/listener"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -60,6 +61,12 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 		rq.w.Header().Set("Content-Type", "application/json")
 		rq.w.Write(b)
 		return nil
+	case len(parts) == 1 && parts[0] == "_listeners":
+		// The directory of listener types this framework supports, with the
+		// settings each takes and which are secrets — for an admin settings
+		// page offering the services an admin may supply a key for. Public
+		// ones only; nothing here is a secret.
+		return writeJSON(rq, http.StatusOK, map[string]any{"data": listener.Infos(false)})
 	case len(parts) == 1 && parts[0] == "me":
 		out := map[string]any{"authenticated": rq.p != nil, "csrf_token": rq.csrf, "guests": a.guestsOffered()}
 		if rq.p != nil {

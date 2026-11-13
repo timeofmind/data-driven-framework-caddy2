@@ -44,6 +44,9 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   from Google Calendar ("From URL"), Apple Calendar or Outlook — that view's entries for
   them from six months back to eighteen ahead, as all-day events. Resetting the link
   cuts off the old one at once.
+- **A directory of listeners** at `GET /api/v1/_listeners`: the listener types the
+  framework supports, each with its settings and which are secrets (`listener.Infos`),
+  for an admin page offering the services an admin may supply a key for.
 - **A JSON API** at `/api/v1/<resource>` for every class, with a generated OpenAPI 3
   document; `read: owner` fields only reach their owner.
 - **Timed triggers**: the model's `at` triggers (a game's clock running out) are fired
