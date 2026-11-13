@@ -36,6 +36,7 @@ listeners:
   db:     {type: sqlite, dsn: %q}
   copies: {type: s3, bucket: club-copies, give_up_after: 1h}
   coach:  {type: llm, providers: claude, claude_model: claude-haiku-5-5, max_tokens: 50, templates: llm}
+  pay:    {type: payment, brand_name: "Walk Club", currency: CAD}
 routes:
   default: {source: db, flows_to: [db]}
   Route: {source: db, flows_to: [db, copies]}
@@ -273,5 +274,78 @@ func TestAdminLink(t *testing.T) {
 	}
 	if code, _, _ := b3.get("/signup?_admin=nonsense"); code != http.StatusNotFound {
 		t.Fatalf("a bad token does not open sign-up: %d", code)
+	}
+}
+
+// A listener working through providers the routing file leaves open (a
+// payment listener's processors) is a card per kind: the admin ticks the
+// ones in use, orders them, and gives each its own keys; the providers
+// setting is derived from the cards. In test mode the listener runs with
+// none; live, a ticked provider without its keys leaves it waiting.
+func TestServiceConfigurationProviders(t *testing.T) {
+	if os.Getenv("DDF_TEST_MYSQL_DSN") != "" {
+		t.Skip("the routed fixture is SQLite")
+	}
+	dir := servicesFixture(t, true)
+	a, srv := newServicesApp(t, dir, []byte("a-token-key-shared-by-the-nodes"))
+	if err := a.Reg.Unconfigured("pay"); err != nil {
+		t.Fatalf("test mode needs nothing: %v", err)
+	}
+	b := newBrowser(t, srv)
+	b.signup("admin@example.com", "Admin")
+	code, body, _ := b.get("/admin/services")
+	if code != http.StatusOK {
+		t.Fatalf("admin page: %d\n%s", code, body)
+	}
+	for _, want := range []string{`id="svc-pay-stripe"`, `id="svc-pay-paypal"`, `id="svc-pay-mollie"`, `id="svc-pay-square"`, `id="svc-pay-amazonpay"`,
+		`name="use_stripe"`, `name="rank_stripe"`, `name="s_stripe_secret_key"`, `name="s_paypal_client_id"`, `name="s_amazonpay_private_key"`, `<textarea id="f-s_amazonpay_private_key"`,
+		`name="s_mode"`, `name="s_route_by"`, "<dt>brand_name</dt><dd>Walk Club</dd>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+	if strings.Contains(body, `name="s_providers"`) || strings.Contains(body, `name="s_brand_name"`) {
+		t.Error("providers is derived from the cards; brand_name is the routing's")
+	}
+	// Stripe and PayPal in use, PayPal first; live.
+	code, body, _ = b.post("/admin/services", url.Values{"listener": {"pay"}, "s_mode": {"live"},
+		"use_stripe": {"1"}, "rank_stripe": {"2"}, "s_stripe_secret_key": {"sk_test_abc"},
+		"use_paypal": {"1"}, "rank_paypal": {"1"}, "s_paypal_client_id": {"cid"}, "s_paypal_secret": {"shh"}, "s_paypal_environment": {"sandbox"}})
+	if code != http.StatusSeeOther {
+		t.Fatalf("save: %d\n%s", code, extractAlert(body))
+	}
+	if err := a.Reg.Unconfigured("pay"); err != nil {
+		t.Fatalf("configured: %v", err)
+	}
+	if s := a.Reg.Settings("pay"); s["providers"] != "paypal, stripe" || s["mode"] != "live" || s["stripe_secret_key"] != "sk_test_abc" || s["paypal_secret"] != "shh" {
+		t.Fatalf("settings: %v", s)
+	}
+	code, body, _ = b.get("/admin/services")
+	if code != http.StatusOK || !strings.Contains(body, `name="use_paypal" value="1" checked`) || !strings.Contains(body, `name="rank_paypal" min="1" step="1" value="1"`) || !strings.Contains(body, `name="rank_stripe" min="1" step="1" value="2"`) || strings.Contains(body, `name="use_mollie" value="1" checked`) {
+		t.Fatalf("the cards after the save:\n%s", body)
+	}
+	if strings.Contains(body, "sk_test_abc") || strings.Contains(body, "shh") || !strings.Contains(body, `name="clear_stripe_secret_key"`) {
+		t.Fatal("a provider's secret is never shown again")
+	}
+	// Square ticked without its token: the listener waits, and says why.
+	code, body, _ = b.post("/admin/services", url.Values{"listener": {"pay"}, "s_mode": {"live"}, "use_stripe": {"1"}, "use_square": {"1"}, "s_square_location_id": {"L1"}})
+	if code != http.StatusSeeOther {
+		t.Fatalf("save square: %d\n%s", code, extractAlert(body))
+	}
+	if err := a.Reg.Unconfigured("pay"); err == nil || !strings.Contains(err.Error(), "square") || !strings.Contains(err.Error(), "access_token is required") {
+		t.Fatalf("square without its token: %v", err)
+	}
+	if s := a.Reg.Settings("pay"); s["providers"] != "stripe, square" {
+		t.Fatalf("providers: %q", s["providers"])
+	}
+	// Nothing ticked, back to test mode: runs again with no provider.
+	if code, body, _ := b.post("/admin/services", url.Values{"listener": {"pay"}, "s_mode": {"test"}}); code != http.StatusSeeOther {
+		t.Fatalf("save test: %d\n%s", code, extractAlert(body))
+	}
+	if err := a.Reg.Unconfigured("pay"); err != nil {
+		t.Fatalf("test mode again: %v", err)
+	}
+	if s := a.Reg.Settings("pay"); s["providers"] != "" {
+		t.Fatalf("providers forgotten: %q", s["providers"])
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,10 +29,28 @@ import (
 
 const servicesPath = "/admin/services"
 
-// serviceView is one listener on the page.
+// serviceView is one listener on the page: its own settings, and — for a
+// listener type working through providers (a payment listener's
+// processors) — a card per provider.
 type serviceView struct {
 	Name, Type, Summary string
 	Problem             string // why it is not open; "" when it is
+	Fixed               []fixedSetting
+	Fields              []ux.FormField
+	Providers           []providerView
+	// ProvidersFixed: the routing file names the providers in use; the
+	// cards are those. Otherwise the cards are every kind the type offers,
+	// and the admin ticks the ones in use.
+	ProvidersFixed bool
+}
+
+// providerView is one provider's card: its name (the prefix of its
+// settings), its kind, whether it is in use and in what order.
+type providerView struct {
+	Name, Type, Summary string
+	Unknown             bool // a kind the listener type does not offer
+	Use                 bool
+	Rank                int
 	Fixed               []fixedSetting
 	Fields              []ux.FormField
 }
@@ -70,28 +89,67 @@ func (a *App) configurable() []string {
 	return out
 }
 
-// settingsOf are a listener type's settings for one listener: a setting
-// named per provider in the directory (the llm listener's <p>_api_key) is
-// expanded for each provider the listener's settings name (providers:
-// "claude, kimi"), and left out when none are named.
-func settingsOf(info listener.Info, settings map[string]string) []listener.Setting {
-	var providers []string
-	for _, p := range strings.Split(settings["providers"], ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			providers = append(providers, p)
+// providersOf lists a listener's provider cards: the providers the routing
+// file names (each of its kind), or, when it names none, every kind the
+// type offers under its own name — in use when the (stored) providers
+// setting lists it, ranked by its place there.
+func providersOf(info listener.Info, cfg listener.Config, settings map[string]string) ([]providerView, bool) {
+	if len(info.Providers) == 0 {
+		return nil, false
+	}
+	if _, fixed := cfg.Settings["providers"]; fixed {
+		var out []providerView
+		for _, np := range info.ProvidersOf(settings) {
+			pv := providerView{Name: np.Name, Type: np.Type, Use: true}
+			if np.Provider != nil {
+				pv.Summary = np.Provider.Summary
+			} else {
+				pv.Unknown = true
+			}
+			out = append(out, pv)
 		}
+		return out, true
+	}
+	inUse := map[string]int{}
+	for i, n := range listener.ProviderNames(settings["providers"]) {
+		inUse[n] = i + 1
+	}
+	var out []providerView
+	for _, p := range info.Providers {
+		pv := providerView{Name: p.Type, Type: p.Type, Summary: p.Summary}
+		if r, ok := inUse[p.Type]; ok {
+			pv.Use, pv.Rank = true, r
+		}
+		out = append(out, pv)
+	}
+	return out, false
+}
+
+// providerSettings are a provider's settings under its name: stripe's
+// secret_key is the listener's stripe_secret_key.
+func providerSettings(info listener.Info, kind, name string) []listener.Setting {
+	p := info.Provider(kind)
+	if p == nil {
+		return nil
+	}
+	out := make([]listener.Setting, 0, len(p.Settings))
+	for _, s := range p.Settings {
+		s.Name = name + "_" + s.Name
+		out = append(out, s)
+	}
+	return out
+}
+
+// listenerSettings are the listener-wide settings offered as fields: all
+// of the type's own, less providers when the cards decide it.
+func listenerSettings(info listener.Info, derived bool) []listener.Setting {
+	if !derived {
+		return info.Settings
 	}
 	var out []listener.Setting
 	for _, s := range info.Settings {
-		if !strings.Contains(s.Name, "<p>") {
+		if s.Name != "providers" {
 			out = append(out, s)
-			continue
-		}
-		for _, p := range providers {
-			e := s
-			e.Name = strings.ReplaceAll(s.Name, "<p>", p)
-			e.Doc = strings.TrimRight(s.Doc, ".") + " (the " + p + " provider)."
-			out = append(out, e)
 		}
 	}
 	return out
@@ -199,51 +257,93 @@ func (a *App) serviceViews(ctx context.Context) []serviceView {
 		if err := a.Reg.Unconfigured(name); err != nil {
 			sv.Problem = err.Error()
 		}
-		settings := settingsOf(info, a.Reg.Settings(name))
-		secretOf := map[string]bool{}
-		for _, s := range settings {
-			secretOf[s.Name] = s.Secret
+		merged := a.Reg.Settings(name)
+		providers, fixed := providersOf(info, cfg, merged)
+		sv.ProvidersFixed = fixed
+		derived := len(info.Providers) > 0 && !fixed
+		own := listenerSettings(info, derived)
+		known := map[string]bool{}
+		for _, s := range own {
+			known[s.Name] = true
 		}
-		var fixed []string
+		for i := range providers {
+			for _, s := range providerSettings(info, providers[i].Type, providers[i].Name) {
+				known[s.Name] = true
+			}
+		}
+		// What the routing file gives, shown fixed: with the listener, or
+		// on its provider's card.
+		var fixedNames []string
 		for k := range cfg.Settings {
-			fixed = append(fixed, k)
+			fixedNames = append(fixedNames, k)
 		}
-		sort.Strings(fixed)
-		for _, k := range fixed {
+		sort.Strings(fixedNames)
+		for _, k := range fixedNames {
 			v := cfg.Settings[k]
-			if secretOf[k] || strings.Contains(k, "key") || strings.Contains(k, "secret") || strings.Contains(k, "password") || k == "dsn" {
+			if strings.Contains(k, "key") || strings.Contains(k, "secret") || strings.Contains(k, "password") || strings.Contains(k, "token") || k == "dsn" {
 				v = "(set)"
 			}
-			sv.Fixed = append(sv.Fixed, fixedSetting{Name: k, Value: v})
-		}
-		for _, s := range settings {
-			if _, inRouting := cfg.Settings[s.Name]; inRouting {
+			if derived && k == "providers" {
 				continue
 			}
-			help := s.Doc
-			if s.Default != "" {
-				help = strings.TrimRight(help, ".") + ". Default: " + s.Default + "."
-			}
-			f := ux.FormField{Name: "s_" + s.Name, Label: s.Name, Type: "text", Required: s.Required, Help: help, Placeholder: s.Default}
-			stored, isStored := values[name][s.Name]
-			if s.Secret {
-				f.Type = "password"
-				f.Required = false // blank keeps what is stored
-				if isStored && secrets[name][s.Name] {
-					f.Help = "Stored. Leave blank to keep it. " + help
-					f.Placeholder = "••••••••"
-				} else if s.Required {
-					f.Help = "Required. " + help
+			placed := false
+			for i := range providers {
+				if strings.HasPrefix(k, providers[i].Name+"_") {
+					providers[i].Fixed = append(providers[i].Fixed, fixedSetting{Name: k, Value: v})
+					placed = true
+					break
 				}
-			} else if isStored {
-				f.Value = stored
 			}
-			sv.Fields = append(sv.Fields, f)
-			if s.Secret && isStored {
-				sv.Fields = append(sv.Fields, ux.FormField{Name: "clear_" + s.Name, Label: "Forget the stored " + s.Name, Type: "checkbox"})
+			if !placed {
+				sv.Fixed = append(sv.Fixed, fixedSetting{Name: k, Value: v})
 			}
 		}
+		sv.Fields = fieldsFor(own, cfg.Settings, values[name], secrets[name])
+		for i := range providers {
+			providers[i].Fields = fieldsFor(providerSettings(info, providers[i].Type, providers[i].Name), cfg.Settings, values[name], secrets[name])
+		}
+		sv.Providers = providers
 		out = append(out, sv)
+	}
+	return out
+}
+
+// fieldsFor makes the form fields of settings not given by the routing
+// file: a stored plain value shown, a stored secret never — blank keeps it,
+// a checkbox forgets it.
+func fieldsFor(settings []listener.Setting, inRouting map[string]string, values map[string]string, secrets map[string]bool) []ux.FormField {
+	var out []ux.FormField
+	for _, s := range settings {
+		if _, fixed := inRouting[s.Name]; fixed {
+			continue
+		}
+		help := s.Doc
+		if s.Default != "" {
+			help = strings.TrimRight(help, ".") + ". Default: " + s.Default + "."
+		}
+		f := ux.FormField{Name: "s_" + s.Name, Label: s.Name, Type: "text", Required: s.Required, Help: help, Placeholder: s.Default}
+		if s.Multiline {
+			f.Type = "textarea"
+		}
+		stored, isStored := values[s.Name]
+		if s.Secret {
+			if !s.Multiline {
+				f.Type = "password"
+			}
+			f.Required = false // blank keeps what is stored
+			if isStored && secrets[s.Name] {
+				f.Help = "Stored. Leave blank to keep it. " + help
+				f.Placeholder = "••••••••"
+			} else if s.Required {
+				f.Help = "Required. " + help
+			}
+		} else if isStored {
+			f.Value = stored
+		}
+		out = append(out, f)
+		if s.Secret && isStored {
+			out = append(out, ux.FormField{Name: "clear_" + s.Name, Label: "Forget the stored " + s.Name, Type: "checkbox"})
+		}
 	}
 	return out
 }
@@ -266,7 +366,14 @@ func (a *App) saveService(rq *request, name string) error {
 	info := infos[cfg.Type]
 	f := rq.r.PostForm
 	ctx := rq.ctx()
-	for _, s := range settingsOf(info, a.Reg.Settings(name)) {
+	merged := a.Reg.Settings(name)
+	providers, fixed := providersOf(info, cfg, merged)
+	derived := len(info.Providers) > 0 && !fixed
+	settings := listenerSettings(info, derived)
+	for i := range providers {
+		settings = append(settings, providerSettings(info, providers[i].Type, providers[i].Name)...)
+	}
+	for _, s := range settings {
 		if _, inRouting := cfg.Settings[s.Name]; inRouting {
 			continue
 		}
@@ -286,6 +393,38 @@ func (a *App) saveService(rq *request, name string) error {
 			if err := a.storeSetting(ctx, rq.p.ID, name, s.Name, v, s.Secret); err != nil {
 				return err
 			}
+		}
+	}
+	if derived {
+		// The providers in use are the cards ticked, in the order given
+		// (then the directory's).
+		type pick struct {
+			name string
+			rank int
+			i    int
+		}
+		var picks []pick
+		for i, p := range providers {
+			if f.Get("use_"+p.Name) != "1" {
+				continue
+			}
+			r, _ := strconv.Atoi(strings.TrimSpace(f.Get("rank_" + p.Name)))
+			if r <= 0 {
+				r = 1000 + i
+			}
+			picks = append(picks, pick{p.Name, r, i})
+		}
+		sort.SliceStable(picks, func(i, j int) bool { return picks[i].rank < picks[j].rank })
+		var names []string
+		for _, p := range picks {
+			names = append(names, p.name)
+		}
+		if len(names) == 0 {
+			if err := a.forgetSetting(ctx, name, "providers"); err != nil {
+				return err
+			}
+		} else if err := a.storeSetting(ctx, rq.p.ID, name, "providers", strings.Join(names, ", "), false); err != nil {
+			return err
 		}
 	}
 	// The stored settings are the truth: the destination opens with them,
