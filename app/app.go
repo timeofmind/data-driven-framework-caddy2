@@ -31,7 +31,7 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/listener/hooks"
 	"github.com/timeofmind/data-driven-framework-go/listener/llm"
 	"github.com/timeofmind/data-driven-framework-go/listener/mail"
-	_ "github.com/timeofmind/data-driven-framework-go/listener/payment"
+	"github.com/timeofmind/data-driven-framework-go/listener/payment"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/paypal"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/s3"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/shipping"
@@ -380,6 +380,9 @@ func (a *App) readyListener(l listener.Listener) error {
 			}
 		}
 	}
+	if pl, ok := l.(*payment.Listener); ok && pl.BaseURL() == "" {
+		pl.SetBaseURL(cfg.BaseURL) // a return_url that is a path of the app
+	}
 	if ml, ok := l.(*mail.Listener); ok {
 		if ml.BaseURL() == "" {
 			ml.SetBaseURL(cfg.BaseURL)
@@ -489,7 +492,7 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "same-origin")
 	h.Set("X-Frame-Options", "DENY")
-	h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	h.Set("Content-Security-Policy", a.csp())
 
 	feedPage, _ := a.Pages.FeedCalendar()
 	switch {
@@ -869,4 +872,27 @@ func (a *App) clientIP(r *http.Request) string {
 
 func (a *App) rateLimited(rq *request, action string, n int, window time.Duration) bool {
 	return !a.limiter.allow(action+"|"+a.clientIP(rq.r), n, window)
+}
+
+// amazonPayHosts are what Amazon Pay's checkout needs on the page: its
+// script (one host per region) in a frame of its own, and Amazon's pages.
+const amazonPayHosts = "https://static-na.payments-amazon.com https://static-eu.payments-amazon.com https://static-fe.payments-amazon.com https://*.payments-amazon.com https://*.amazon.com https://*.amazon.co.uk https://*.amazon.de https://*.amazon.fr https://*.amazon.it https://*.amazon.es https://*.amazon.co.jp"
+
+// csp is the page's Content Security Policy: the app's own origin alone —
+// and, while a payment listener has Amazon Pay open (a card ticked on the
+// Service Configuration page), Amazon Pay's hosts for its button.
+func (a *App) csp() string {
+	for _, l := range a.Reg.Listeners {
+		pl, ok := listener.Unwrap(l).(*payment.Listener)
+		if !ok {
+			continue
+		}
+		for _, k := range pl.Kinds() {
+			if k == "amazonpay" {
+				return "default-src 'self'; img-src 'self' data: " + amazonPayHosts + "; style-src 'self'; script-src 'self' " + amazonPayHosts +
+					"; frame-src " + amazonPayHosts + "; connect-src 'self' " + amazonPayHosts + "; form-action 'self' " + amazonPayHosts + "; frame-ancestors 'none'; base-uri 'none'"
+			}
+		}
+	}
+	return "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 }

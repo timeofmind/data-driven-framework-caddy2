@@ -2,6 +2,10 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
@@ -338,6 +342,20 @@ func TestServiceConfigurationProviders(t *testing.T) {
 	if s := a.Reg.Settings("pay"); s["providers"] != "stripe, square" {
 		t.Fatalf("providers: %q", s["providers"])
 	}
+	// Amazon Pay ticked with its key: open, and the pages admit its script.
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	code, body, _ = b.post("/admin/services", url.Values{"listener": {"pay"}, "s_mode": {"live"}, "use_amazonpay": {"1"},
+		"s_amazonpay_merchant_id": {"A1M"}, "s_amazonpay_store_id": {"amzn1.application-oa2-client.x"}, "s_amazonpay_public_key_id": {"SANDBOX-K"}, "s_amazonpay_private_key": {pemKey}})
+	if code != http.StatusSeeOther {
+		t.Fatalf("save amazonpay: %d\n%s", code, extractAlert(body))
+	}
+	if err := a.Reg.Unconfigured("pay"); err != nil {
+		t.Fatalf("amazonpay: %v", err)
+	}
+	if _, _, h := b.get("/"); !strings.Contains(h.Get("Content-Security-Policy"), "script-src 'self' https://static-na.payments-amazon.com") || !strings.Contains(h.Get("Content-Security-Policy"), "frame-src https://static-na.payments-amazon.com") {
+		t.Fatalf("the CSP admits Amazon Pay: %s", h.Get("Content-Security-Policy"))
+	}
 	// Nothing ticked, back to test mode: runs again with no provider.
 	if code, body, _ := b.post("/admin/services", url.Values{"listener": {"pay"}, "s_mode": {"test"}}); code != http.StatusSeeOther {
 		t.Fatalf("save test: %d\n%s", code, extractAlert(body))
@@ -347,5 +365,8 @@ func TestServiceConfigurationProviders(t *testing.T) {
 	}
 	if s := a.Reg.Settings("pay"); s["providers"] != "" {
 		t.Fatalf("providers forgotten: %q", s["providers"])
+	}
+	if _, _, h := b.get("/"); strings.Contains(h.Get("Content-Security-Policy"), "amazon") {
+		t.Fatalf("the CSP is the app's own again: %s", h.Get("Content-Security-Policy"))
 	}
 }
