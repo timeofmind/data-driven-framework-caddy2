@@ -29,6 +29,7 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/listener"
 	"github.com/timeofmind/data-driven-framework-go/listener/appbuilder"
 	"github.com/timeofmind/data-driven-framework-go/listener/hooks"
+	_ "github.com/timeofmind/data-driven-framework-go/listener/image"
 	"github.com/timeofmind/data-driven-framework-go/listener/llm"
 	"github.com/timeofmind/data-driven-framework-go/listener/mail"
 	"github.com/timeofmind/data-driven-framework-go/listener/payment"
