@@ -48,7 +48,8 @@ type serviceView struct {
 // settings), its kind, whether it is in use and in what order.
 type providerView struct {
 	Name, Type, Summary string
-	Unknown             bool // a kind the listener type does not offer
+	Currencies          string // a payment processor's currencies, for the card
+	Unknown             bool   // a kind the listener type does not offer
 	Use                 bool
 	Rank                int
 	Fixed               []fixedSetting
@@ -56,6 +57,22 @@ type providerView struct {
 }
 
 type fixedSetting struct{ Name, Value string }
+
+// currenciesText is a provider's currencies as the card shows them: the
+// codes, then the note; "" when the directory says nothing.
+func currenciesText(p *listener.Provider) string {
+	s := strings.Join(p.Currencies, ", ")
+	if p.CurrenciesNote != "" {
+		if s != "" {
+			s += " — "
+		}
+		s += p.CurrenciesNote
+	}
+	if s == "" {
+		return ""
+	}
+	return "Currencies: " + s
+}
 
 type servicesPage struct {
 	Message, Error string
@@ -102,7 +119,7 @@ func providersOf(info listener.Info, cfg listener.Config, settings map[string]st
 		for _, np := range info.ProvidersOf(settings) {
 			pv := providerView{Name: np.Name, Type: np.Type, Use: true}
 			if np.Provider != nil {
-				pv.Summary = np.Provider.Summary
+				pv.Summary, pv.Currencies = np.Provider.Summary, currenciesText(np.Provider)
 			} else {
 				pv.Unknown = true
 			}
@@ -116,7 +133,7 @@ func providersOf(info listener.Info, cfg listener.Config, settings map[string]st
 	}
 	var out []providerView
 	for _, p := range info.Providers {
-		pv := providerView{Name: p.Type, Type: p.Type, Summary: p.Summary}
+		pv := providerView{Name: p.Type, Type: p.Type, Summary: p.Summary, Currencies: currenciesText(&p)}
 		if r, ok := inUse[p.Type]; ok {
 			pv.Use, pv.Rank = true, r
 		}
