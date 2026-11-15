@@ -83,6 +83,12 @@ type Config struct {
 	// Cluster, when set, joins this node to the others (needs LogDir).
 	Cluster *ClusterConfig
 
+	// MediaURL and MediaToken reach the hosting's media library (dd-media)
+	// for the admin Media page: the node's DD_MEDIA_URL and DD_MEDIA_TOKEN
+	// when not set here; no token, no library (the page says so).
+	MediaURL   string
+	MediaToken string
+
 	// ClientIP returns the client address for rate limiting; defaults to RemoteAddr.
 	ClientIP func(*http.Request) string
 	Logger   *slog.Logger
@@ -317,6 +323,17 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		reg.Close()
 		return nil, fmt.Errorf("%s: the path %s is the server's own (Service Configuration)", p.File, servicesPath)
 	}
+	if p, _ := pages.Match(mediaPath); p != nil {
+		cancel()
+		reg.Close()
+		return nil, fmt.Errorf("%s: the path %s is the server's own (Media)", p.File, mediaPath)
+	}
+	adminSections, err := loadAdminSections(cfg.AppDir, pages)
+	if err != nil {
+		cancel()
+		reg.Close()
+		return nil, err
+	}
 	for _, n := range reg.ClassNames() {
 		if frameworkClass(n) {
 			continue
@@ -348,7 +365,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	a.site, err = webux.New(webux.Options{
 		Engine: a.engine, Name: man.Name, Tagline: man.Tagline, Nav: man.Nav, ThemeDir: man.ThemeDir(),
 		Signup: a.auth != nil && man.signupEnabled(), Reset: a.resetEnabled(), Log: cfg.Logger,
-		Upload: a.uploadView, UploadInfo: a.uploadInfo,
+		Upload: a.uploadView, UploadInfo: a.uploadInfo, AdminSections: adminSections,
 		SignedOut: func(rq *webux.Request) {
 			if rq.Viewer != nil {
 				a.endAllSessions(rq.R.Context(), rq.Viewer.ID)
@@ -502,12 +519,16 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		a.site.ServeStatic(a.webRequest(rq), strings.Join(parts[1:], "/"))
 	case path == "/_dd/admin" && a.auth != nil:
 		a.wrap(rq, a.adminLink)
+	case path == mediaAPIPath || strings.HasPrefix(path, mediaAPIPath+"/"):
+		a.mediaAPI(rq, strings.Split(strings.Trim(strings.TrimPrefix(path, mediaAPIPath), "/"), "/"))
 	case parts[0] == "_dd" && len(parts) == 2:
 		if !a.site.ServeScript(a.webRequest(rq), parts[1]) {
 			http.NotFound(w, r)
 		}
 	case path == servicesPath:
 		a.wrap(rq, a.services)
+	case path == mediaPath:
+		a.wrap(rq, a.mediaAdmin)
 	case path == "/signup" && a.auth != nil && (a.man.signupEnabled() || a.adminSignup(rq) != ""):
 		a.wrap(rq, a.signup)
 	case path == "/login" && a.auth != nil:

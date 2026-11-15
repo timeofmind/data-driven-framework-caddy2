@@ -122,6 +122,8 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		SessionTTL:     time.Duration(h.SessionTTL),
 		UploadDir:      h.UploadDir,
 		MaxUploadBytes: h.MaxUploadBytes,
+		MediaURL:       os.Getenv("DD_MEDIA_URL"),
+		MediaToken:     os.Getenv("DD_MEDIA_TOKEN"),
 		Logger:         ctx.Slogger(),
 		ClientIP: func(r *http.Request) string {
 			if v, ok := caddyhttp.GetVar(r.Context(), caddyhttp.ClientIPVarKey).(string); ok {
