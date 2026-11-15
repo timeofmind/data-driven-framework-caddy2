@@ -55,9 +55,22 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   framework class `FrameworkServiceSetting` (secrets sealed under `token_key_file`),
   the listener is opened again with them at once and at every start, and what was parked
   for it while it waited is delivered. A destination without all its settings no longer
-  keeps the app from starting: it waits, parking what flows to it. An app's own pages
-  may say `access: admin` to sit beside this one. See the framework's
+  keeps the app from starting: it waits, parking what flows to it. See the framework's
   `docs/service-configuration.md`.
+- **The admin area** is the same in every app and styled by its theme: Service
+  Configuration and **Media** (`/admin/media`) are the server's two sections, and the
+  app names its own in `admin.yaml` beside `app.yaml` (`sections: [{label, path}]`;
+  without it, the app's pages under `/admin/`). The layout draws the admin navigation on
+  those pages for admins (a theme with its own `layout.html` renders `.AdminNav`). The
+  Media page is the app's media library on the hosting: uploads (drag and drop), the
+  grid with each file's address, alt text, delete. Its calls go to `/_dd/media/…` on this
+  server — admin session and `X-CSRF-Token` — which relays them to `dd-media` with the
+  node's token: `DD_MEDIA_URL` and `DD_MEDIA_TOKEN` in the process environment (the
+  hosting gives every node both; `Config.MediaURL`/`MediaToken` in Go). A slot is
+  answered with an `upload_token` (the presigned POST sealed under `token_key_file`, so
+  any node of the cluster may take the file) and the file is streamed through to the
+  bucket, never kept here. Without a token the page says the library is not available.
+  See the framework's `docs/interface-model.md`, "The admin area".
 - **The admin link** for an app's first admin: `caddy admin-link --token-key FILE
   --login EMAIL --base-url URL [--ttl 10m]` (or `app.AdminLink`) mints
   `/_dd/admin?token=…`, signed with the token key and naming one of the `admins`
@@ -128,15 +141,19 @@ example.com {
 }
 ```
 
+From the environment: `DD_MEDIA_URL` and `DD_MEDIA_TOKEN` (the hosting's media library
+for the Media page; absent on a self-hosted app).
+
 The handler answers its pages' paths, `/signup`, `/login`, `/logout`, `/me`, `/forgot`
 and `/reset` (when `password_reset` names the app's class of reset codes: it belongs to
 the auth class and has `code`, `expires_at` and `used_at`; the record the forgot page
 saves flows wherever the routing sends the class — a mail listener with a template
 holding `{{.base_url}}/reset?code={{.record.code}}` — and the answer never says whether
 the account exists), a
-calendar's `/feed`, `/admin/services`, `/static/…`, `/_dd/…` (scripts, and
-`/_dd/admin` for an admin link) and `/api/v1/…`; everything else falls through to the
-next handler. A page file may not claim `/admin/services`.
+calendar's `/feed`, `/admin/services`, `/admin/media`, `/static/…`, `/_dd/…` (scripts,
+`/_dd/admin` for an admin link, `/_dd/media/…` for the Media page) and `/api/v1/…`;
+everything else falls through to the next handler. A page file may not claim
+`/admin/services` or `/admin/media`.
 
 ## app.yaml
 
