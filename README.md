@@ -166,6 +166,7 @@ theme: theme                       # default "theme"
 timezone: America/Vancouver        # "today", and the default for imports
 signup: {enabled: true, intro: "Shown above the sign-up form"}
 password_reset: {class: PasswordReset, expires: 1h}   # /forgot emails a link, /reset?code=… sets the password
+image_hosts: [https://my-media.s3.us-east-1.amazonaws.com]   # origins pages may load pictures from besides the app's own (the CSP)
 nav: [calendar, walks, routes]     # page names in the main menu
 ```
 

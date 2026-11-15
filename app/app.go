@@ -286,6 +286,35 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		// For a destination that follows work it started (appbuilder: a
 		// build under way): the records to take up again after a restart,
 		// and whether this node leads — its loop runs on the leader alone.
+		Upsert: func(ctx context.Context, class, key string, values map[string]any) (int64, error) {
+			h, err := reg.Class(class)
+			if err != nil {
+				return 0, err
+			}
+			kept := map[string]any{}
+			for k, v := range values {
+				if h.Class.Slot(k) != nil {
+					kept[k] = v
+				}
+			}
+			recs, err := h.List(ctx, runtime.Query{Where: []runtime.Cond{runtime.Eq(key, values[key])}, Limit: 1})
+			if err != nil {
+				return 0, err
+			}
+			var rec *runtime.Record
+			if len(recs) > 0 {
+				rec = recs[0]
+				for k, v := range kept {
+					rec.Values[k] = v
+				}
+			} else {
+				rec = h.New(kept)
+			}
+			if err := h.Save(ctx, rec); err != nil {
+				return 0, err
+			}
+			return rec.ID(), nil
+		},
 		Find: func(ctx context.Context, class, slot string, value any) ([]int64, error) {
 			recs, err := reg.MustClass(class).List(ctx, runtime.Query{Where: []runtime.Cond{runtime.Eq(slot, value)}, Limit: 1000})
 			if err != nil {
@@ -905,6 +934,12 @@ const amazonPayHosts = "https://static-na.payments-amazon.com https://static-eu.
 // and, while a payment listener has Amazon Pay open (a card ticked on the
 // Service Configuration page), Amazon Pay's hosts for its button.
 func (a *App) csp() string {
+	img := "img-src 'self' data:"
+	for _, h := range a.man.ImageHosts {
+		if h = strings.TrimSpace(h); h != "" {
+			img += " " + h
+		}
+	}
 	for _, l := range a.Reg.Listeners {
 		pl, ok := listener.Unwrap(l).(*payment.Listener)
 		if !ok {
@@ -912,10 +947,10 @@ func (a *App) csp() string {
 		}
 		for _, k := range pl.Kinds() {
 			if k == "amazonpay" {
-				return "default-src 'self'; img-src 'self' data: " + amazonPayHosts + "; style-src 'self'; script-src 'self' " + amazonPayHosts +
+				return "default-src 'self'; " + img + " " + amazonPayHosts + "; style-src 'self'; script-src 'self' " + amazonPayHosts +
 					"; frame-src " + amazonPayHosts + "; connect-src 'self' " + amazonPayHosts + "; form-action 'self' " + amazonPayHosts + "; frame-ancestors 'none'; base-uri 'none'"
 			}
 		}
 	}
-	return "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+	return "default-src 'self'; " + img + "; style-src 'self'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 }

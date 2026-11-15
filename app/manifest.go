@@ -46,6 +46,10 @@ type Manifest struct {
 		Expires string `yaml:"expires"`
 	} `yaml:"password_reset"`
 	Nav []string `yaml:"nav"`
+	// ImageHosts are origins the pages may load pictures from besides the
+	// app's own (a media bucket's: https://bucket.s3.amazonaws.com); they
+	// go into the pages' Content Security Policy.
+	ImageHosts []string `yaml:"image_hosts"`
 	// Guests tunes guests (the auth class's guest slot enables them): the
 	// display name a guest row gets, how many new guests and how many
 	// guests' writes an address may make per hour, and how long an idle
