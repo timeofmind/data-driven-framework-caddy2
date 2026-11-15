@@ -109,12 +109,19 @@ type App struct {
 	bySlug  map[string]*runtime.Handle // API resources
 	limiter *limiter
 	log     *slog.Logger
-	admins  map[string]bool
-	loc     *time.Location
-	signer  *ux.Signer
-	cancel  context.CancelFunc
-	bg      context.Context // the app's lifetime, for what a listener runs in the background
-	hooks   hooks.Hooks     // what a destination takes from the app (readyListener)
+	admins  map[string]bool // the owners: the configuration's admin logins
+	// The admin area: its sections with the level each asks for, where the
+	// Admins page is, and the admins kept in the app's data as last read.
+	sections     []ux.Anchor
+	adminsPath   string
+	adminMu      sync.Mutex
+	adminCache   map[int64]int
+	adminCacheAt int64
+	loc          *time.Location
+	signer       *ux.Signer
+	cancel       context.CancelFunc
+	bg           context.Context // the app's lifetime, for what a listener runs in the background
+	hooks        hooks.Hooks     // what a destination takes from the app (readyListener)
 	// liveMemo: what checking a change for the event streams cost, kept a
 	// moment, shared by every stream (live.go).
 	liveMemo liveMemo
@@ -372,12 +379,20 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		reg.Close()
 		return nil, fmt.Errorf("%s: the path %s is the server's own (Media)", p.File, mediaPath)
 	}
-	adminSections, err := loadAdminSections(cfg.AppDir, pages)
+	adminsAt := adminsPath
+	if p, _ := pages.Match(adminsPath); p != nil {
+		// An app made before the server had an Admins page may have one of
+		// its own there: it keeps it, and the server's goes beside it.
+		adminsAt = adminsPathTaken
+		cfg.Logger.Warn("the app has a page of its own where the server's Admins page goes; the server's is at "+adminsPathTaken, "page", p.File)
+	}
+	adminSections, err := loadAdminSections(cfg.AppDir, pages, adminsAt)
 	if err != nil {
 		cancel()
 		reg.Close()
 		return nil, err
 	}
+	a.sections, a.adminsPath = adminSections, adminsAt
 	for _, n := range reg.ClassNames() {
 		if frameworkClass(n) {
 			continue
@@ -576,6 +591,8 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		a.wrap(rq, a.services)
 	case path == mediaPath:
 		a.wrap(rq, a.mediaAdmin)
+	case path == a.adminsPath:
+		a.wrap(rq, a.adminsAdmin)
 	case path == "/signup" && a.auth != nil && (a.man.signupEnabled() || a.adminSignup(rq) != ""):
 		a.wrap(rq, a.signup)
 	case path == "/login" && a.auth != nil:
@@ -603,11 +620,25 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		if p, _ := a.Pages.Match(path); p == nil {
 			return false
 		}
+		// A page in a section of the admin area that names a level is for
+		// the admins whose authority reaches it.
+		level := a.sectionLevel(path)
 		if r.Method == http.MethodGet && r.URL.Query().Get("_live") == "1" {
-			a.wrap(rq, func(rq *request) error { return a.live(rq, path) })
+			a.wrap(rq, func(rq *request) error {
+				if level > 0 && !rq.p.AdminAllowed(level) {
+					return errForbidden
+				}
+				return a.live(rq, path)
+			})
 			return true
 		}
 		a.wrap(rq, func(rq *request) error {
+			if level > 0 && !rq.p.AdminAllowed(level) {
+				if rq.p == nil {
+					return errStatus(http.StatusUnauthorized, "Please sign in first")
+				}
+				return errForbidden
+			}
 			// A redraw after a push names the newest version the browser was
 			// pushed (by any node): this node waits to have applied it, so
 			// the page is never older than the push that asked for it.
@@ -852,10 +883,23 @@ func (a *App) resolveSession(rq *request) {
 	rq.session = hash
 }
 
+// principal is who an account's record makes its holder: an admin when the
+// configuration names their login (an owner, level 0), when the model's
+// auth class marks them one (level 1), or when they were added on the
+// Admins page (the level given there) — the most authority of those.
 func (a *App) principal(rec *runtime.Record) *runtime.Principal {
 	p := runtime.PrincipalFor(rec)
-	if a.auth != nil && a.admins[strings.ToLower(rec.String(a.auth.Class.Auth.Login))] {
-		p.Admin = true
+	if p.Admin {
+		p.Level = 1
+	}
+	if a.auth == nil || p.Guest {
+		return p
+	}
+	if level, ok := a.dataAdmins(context.Background())[rec.ID()]; ok && (!p.Admin || level < p.Level) {
+		p.Admin, p.Level = true, level
+	}
+	if a.admins[strings.ToLower(rec.String(a.auth.Class.Auth.Login))] {
+		p.Admin, p.Level = true, 0
 	}
 	return p
 }

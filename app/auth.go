@@ -74,6 +74,9 @@ func (a *App) signup(rq *request) error {
 					return err
 				}
 				a.log.Info("signup", "id", rec.ID())
+				if admin != "" && !a.admins[admin] {
+					a.joinAdmins(rq.ctx(), admin, rec.ID()) // invited on the Admins page
+				}
 				if next == "" {
 					next = a.Pages.RecordURL(a.cfg.BasePath, c.Name, rec.ID())
 				}

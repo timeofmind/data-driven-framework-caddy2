@@ -228,13 +228,11 @@ func reopenStored(ctx context.Context, reg *runtime.Registry, tokenKey []byte, l
 	}
 }
 
-// services serves the page and its saves. Admins only.
+// services serves the page and its saves: admins only, with the authority
+// the section asks for.
 func (a *App) services(rq *request) error {
-	if rq.p == nil {
-		return errStatus(http.StatusUnauthorized, "Please sign in first")
-	}
-	if !rq.p.Admin {
-		return errForbidden
+	if ok, err := a.adminSection(rq, servicesPath); !ok {
+		return err
 	}
 	pg := servicesPage{NoKey: len(a.cfg.TokenKey) == 0}
 	if rq.r.Method == http.MethodPost {

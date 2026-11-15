@@ -18,6 +18,10 @@ import (
 // allowed even when sign-up is off — so the first admin can set a password
 // and reach the admin backend. The link is checked on any node (the token
 // key is shared) and is good until it expires; it is not single-use.
+//
+// The Admins page mints the same link for someone it invites (admins.go):
+// a login with no account yet. That link only leads to sign-up — it signs
+// nobody in — and stops working once the invitation is taken up.
 
 // AdminLinkTTL is how long an admin link is good for unless told otherwise.
 const AdminLinkTTL = 10 * time.Minute
@@ -48,15 +52,20 @@ func (a *App) adminLink(rq *request) error {
 	if !ok {
 		return errStatus(http.StatusForbidden, "This admin link is not valid or has expired. Ask for a new one.")
 	}
-	if !a.admins[login] {
-		return errStatus(http.StatusForbidden, "This link names a login that is not an admin of this app.")
-	}
 	if a.auth == nil {
 		return errStatus(http.StatusNotFound, "This app has no accounts.")
+	}
+	owner := a.admins[login]
+	if !owner && a.invited(rq.ctx(), login) == nil {
+		return errStatus(http.StatusForbidden, "This link names a login that is not an admin of this app, or its invitation was taken up or withdrawn.")
 	}
 	au := a.auth.Class.Auth
 	rec, err := a.auth.First(rq.ctx(), runtime.Query{Where: []runtime.Cond{runtime.Eq(au.Login, login)}})
 	switch {
+	case err == nil && !owner:
+		// Invited, and an account with the login has been made since, by
+		// someone: the link proves nothing about who holds that account.
+		return errStatus(http.StatusForbidden, "An account with this login was created after the invitation was made. Sign in, and ask an admin to add you again.")
 	case err == nil:
 		if err := a.startSession(rq, rec.ID(), true); err != nil {
 			return err
@@ -84,7 +93,7 @@ func (a *App) adminSignup(rq *request) string {
 		return ""
 	}
 	login, ok := a.adminClaims(tok)
-	if !ok || !a.admins[login] {
+	if !ok || (!a.admins[login] && a.invited(rq.ctx(), login) == nil) {
 		return ""
 	}
 	return login

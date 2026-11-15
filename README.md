@@ -58,9 +58,18 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   keeps the app from starting: it waits, parking what flows to it. See the framework's
   `docs/service-configuration.md`.
 - **The admin area** is the same in every app and styled by its theme: Service
-  Configuration and **Media** (`/admin/media`) are the server's two sections, and the
-  app names its own in `admin.yaml` beside `app.yaml` (`sections: [{label, path}]`;
-  without it, the app's pages under `/admin/`). The layout draws the admin navigation on
+  Configuration, **Media** (`/admin/media`) and **Admins** (`/admin/admins`) are the
+  server's three sections, and the app names its own in `admin.yaml` beside `app.yaml`
+  (`sections: [{label, path, level}]`; without it, the app's pages under `/admin/`).
+  **Admins** keeps the app's admins and their authority: the `admins` of the server's
+  configuration are the owners (level 0, not changed in the app); others are added on
+  the page by login with a level (1–99, lower is more authority), kept in the app's
+  data (`FrameworkAdmin`), so a change holds on every node with no restart. An account
+  that exists becomes an admin at once; anyone else is given an invitation link (two
+  days) and is one after signing up through it. A section or page that names a `level`
+  is for admins whose own level is lower; an admin changes only admins of less
+  authority than their own. See "Admins and their levels" in the framework's
+  `docs/interface-model.md`. The layout draws the admin navigation on
   those pages for admins (a theme with its own `layout.html` renders `.AdminNav`). The
   Media page is the app's media library on the hosting: uploads (drag and drop), the
   grid with each file's address, alt text, delete. Its calls go to `/_dd/media/…` on this

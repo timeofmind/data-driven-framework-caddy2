@@ -38,10 +38,14 @@ const (
 	mediaAPIPath = "/_dd/media"
 )
 
-// AdminSection is one section of the admin area, from admin.yaml.
+// AdminSection is one section of the admin area, from admin.yaml. Level,
+// when given, keeps the section to admins whose authority level is lower
+// than it (a lower number is more authority; owners are 0). An entry at
+// the path of one of the server's own sections sets that section's level.
 type AdminSection struct {
 	Label string `yaml:"label"`
 	Path  string `yaml:"path"`
+	Level int    `yaml:"level"`
 }
 
 type adminFile struct {
@@ -49,10 +53,13 @@ type adminFile struct {
 }
 
 // loadAdminSections reads <dir>/admin.yaml: the app's own sections, in
-// order, after the server's. Without the file, the app's pages whose path
-// is under /admin/ are its sections, in page order.
-func loadAdminSections(dir string, pages *ux.Site) ([]ux.Anchor, error) {
-	out := []ux.Anchor{{Label: "Services", URL: servicesPath}, {Label: "Media", URL: mediaPath}}
+// order, after the server's (Services, Media, Admins — the Admins page at
+// adminsAt). Without the file, the app's pages whose path is under /admin/
+// are its sections, in page order, each with its page's level.
+func loadAdminSections(dir string, pages *ux.Site, adminsAt string) ([]ux.Anchor, error) {
+	out := []ux.Anchor{{Label: "Services", URL: servicesPath, Level: servicesLevel}, {Label: "Media", URL: mediaPath},
+		{Label: "Admins", URL: adminsAt, Level: adminsLevel}}
+	own := len(out)
 	b, err := os.ReadFile(filepath.Join(dir, "admin.yaml"))
 	switch {
 	case err == nil:
@@ -63,13 +70,22 @@ func loadAdminSections(dir string, pages *ux.Site) ([]ux.Anchor, error) {
 			return nil, fmt.Errorf("admin.yaml: %w", err)
 		}
 		for i, s := range f.Sections {
+			if s.Level < 0 || s.Level > maxAdminLevel+1 {
+				return nil, fmt.Errorf("admin.yaml: section %d: level is 1 to %d (0 or absent: any admin)", i+1, maxAdminLevel+1)
+			}
+			server := false
+			for k := 0; k < own; k++ {
+				if out[k].URL == strings.TrimRight(s.Path, "/") {
+					out[k].Level, server = s.Level, true // the server's own: its level alone is the app's to say
+				}
+			}
+			if server {
+				continue
+			}
 			if s.Label == "" || !strings.HasPrefix(s.Path, "/") {
 				return nil, fmt.Errorf("admin.yaml: section %d needs a label and a path starting with /", i+1)
 			}
-			if s.Path == servicesPath || s.Path == mediaPath {
-				continue // the server's own
-			}
-			out = append(out, ux.Anchor{Label: s.Label, URL: strings.TrimRight(s.Path, "/")})
+			out = append(out, ux.Anchor{Label: s.Label, URL: strings.TrimRight(s.Path, "/"), Level: s.Level})
 		}
 	case errors.Is(err, os.ErrNotExist):
 		if pages != nil {
@@ -77,7 +93,10 @@ func loadAdminSections(dir string, pages *ux.Site) ([]ux.Anchor, error) {
 				if !strings.HasPrefix(p.Path, "/admin/") || strings.Contains(p.Path, "{") || p.Shared {
 					continue
 				}
-				out = append(out, ux.Anchor{Label: p.LabelText(), URL: strings.TrimRight(p.Path, "/")})
+				if strings.TrimRight(p.Path, "/") == adminsPath {
+					continue // the app's own page there is reached by its own links
+				}
+				out = append(out, ux.Anchor{Label: p.LabelText(), URL: strings.TrimRight(p.Path, "/"), Level: p.Level})
 			}
 		}
 	default:
@@ -104,13 +123,11 @@ type mediaPage struct {
 	Problem   string
 }
 
-// mediaAdmin serves the Media page. Admins only.
+// mediaAdmin serves the Media page: admins only, with the authority the
+// section asks for.
 func (a *App) mediaAdmin(rq *request) error {
-	if rq.p == nil {
-		return errStatus(http.StatusUnauthorized, "Please sign in first")
-	}
-	if !rq.p.Admin {
-		return errForbidden
+	if ok, err := a.adminSection(rq, mediaPath); !ok {
+		return err
 	}
 	pg := mediaPage{Available: a.mediaClient().Available()}
 	if !pg.Available {
@@ -150,7 +167,7 @@ func (a *App) mediaRoute(rq *request, parts []string) error {
 	if rq.p == nil {
 		return errStatus(http.StatusUnauthorized, "sign in first")
 	}
-	if !rq.p.Admin {
+	if !rq.p.AdminAllowed(a.sectionLevel(mediaPath)) {
 		return errForbidden
 	}
 	m := rq.r.Method
