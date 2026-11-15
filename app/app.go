@@ -30,6 +30,7 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/listener/appbuilder"
 	"github.com/timeofmind/data-driven-framework-go/listener/hooks"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/image"
+	"github.com/timeofmind/data-driven-framework-go/listener/imap"
 	"github.com/timeofmind/data-driven-framework-go/listener/llm"
 	"github.com/timeofmind/data-driven-framework-go/listener/mail"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/media"
@@ -326,6 +327,20 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 			}
 			return ids, nil
 		},
+		// For a destination that keeps records of what is elsewhere (imap:
+		// an account's mail): a record whose message is gone is removed.
+		Remove: func(ctx context.Context, class string, id int64) error {
+			h, err := reg.Class(class)
+			if err != nil {
+				return err
+			}
+			if err := h.Delete(ctx, id); errors.Is(err, runtime.ErrNotFound) {
+				return hooks.ErrGone
+			} else if err != nil {
+				return err
+			}
+			return nil
+		},
 		Leading: reg.Leading,
 	}
 	key := cfg.TokenKey
@@ -451,6 +466,9 @@ func (a *App) readyListener(l listener.Listener) error {
 	}
 	if ab, ok := l.(*appbuilder.Listener); ok {
 		ab.Start(a.bg) // follows the builds under way; on the leader alone
+	}
+	if im, ok := l.(*imap.Listener); ok {
+		im.Start(a.bg) // keeps the account's mail in the app; on the leader alone
 	}
 	if ll, ok := l.(*llm.Listener); ok {
 		if tc := ll.TemplateClass; tc != "" {

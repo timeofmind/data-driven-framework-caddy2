@@ -99,6 +99,12 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   as JSON, as one slot's value, or rendered through a template in the app's `s3/`
   directory (resolved and checked at start like the mail templates); where the object
   went is saved onto the record.
+- **Apps that read mail**: a class routed to an `imap` listener (framework
+  `listener/imap`, `on: [update, delete]`) holds one record per message of an account.
+  The handler starts the listener's loop, which looks at the mail server on the
+  cluster's leader and saves new mail and changed flags through the normal save path
+  (`Upsert`), and deletes the record of a message that is gone (`Remove`). Saving a
+  record's `mailbox` or flags, or deleting it, moves, flags or deletes the message.
 - **Read your writes across the nodes**: every answer sets a `dd_seen` cookie with the
   newest change this node had applied, and every request waits (briefly) for the version
   the browser carries — so a page or API read a load balancer sends to the other node is
