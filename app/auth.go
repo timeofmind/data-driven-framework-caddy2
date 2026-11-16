@@ -77,6 +77,11 @@ func (a *App) signup(rq *request) error {
 				if admin != "" && !a.admins[admin] {
 					a.joinAdmins(rq.ctx(), admin, rec.ID()) // invited on the Admins page
 				}
+				if admin != "" {
+					if l := a.linkFor(rq.ctx(), admin); l != nil {
+						a.renewLoginLink(rq.ctx(), l) // their first sign-in
+					}
+				}
 				if next == "" {
 					next = a.Pages.RecordURL(a.cfg.BasePath, c.Name, rec.ID())
 				}
@@ -123,8 +128,18 @@ func (a *App) signup(rq *request) error {
 		adminTok = rq.r.FormValue("_admin")
 	}
 	a.site.Render(a.webRequest(rq), "signup", "Create your account", map[string]any{
-		"Fields": fields, "Message": ux.GeneralError(errs), "Intro": a.man.Signup.Intro, "Next": next, "Admin": adminTok})
+		"Fields": fields, "Message": ux.GeneralError(errs), "Intro": a.man.Signup.Intro, "Next": next, "Admin": adminTok,
+		"Providers": a.signupProviders(rq, admin, next)})
 	return nil
+}
+
+// signupProviders is the providers the sign-up page offers: none to an
+// admin taking up their link, who sets a password.
+func (a *App) signupProviders(rq *request, admin, next string) []signinButton {
+	if admin != "" {
+		return nil
+	}
+	return a.signinOffered(rq, next)
 }
 
 func (a *App) login(rq *request) error {
@@ -136,6 +151,13 @@ func (a *App) login(rq *request) error {
 			return errStatus(http.StatusTooManyRequests, "Too many sign-in attempts. Please wait a few minutes.")
 		}
 		rec, err := a.Reg.Authenticate(rq.ctx(), rq.r.PostFormValue("login"), rq.r.PostFormValue("password"))
+		if err == nil && a.principal(rec).Admin {
+			// An admin signs in at their own address (adminlogin.go), not
+			// here. Said only to someone who has the password, so the page
+			// tells nobody else which accounts are admins.
+			a.log.Info("an admin's sign-in at the public page was refused", "id", rec.ID())
+			return errStatus(http.StatusForbidden, "Admins sign in through their own sign-in link, not this page. If you do not have yours, or it has expired, ask another admin for a new one.")
+		}
 		if err == nil {
 			guest := rq.p // the guest this browser was, if any
 			if err := a.startSession(rq, rec.ID(), true); err != nil {
@@ -159,7 +181,8 @@ func (a *App) login(rq *request) error {
 		msg = "That " + strings.ToLower(a.auth.Class.Slot(au.Login).EffectiveLabel()) + " and password don't match an account."
 	}
 	label := a.auth.Class.Slot(au.Login).EffectiveLabel()
-	a.site.Render(a.webRequest(rq), "login", "Sign in", map[string]any{"Message": msg, "Next": next, "LoginLabel": label, "Login": rq.r.PostFormValue("login")})
+	a.site.Render(a.webRequest(rq), "login", "Sign in", map[string]any{"Message": msg, "Next": next, "LoginLabel": label, "Login": rq.r.PostFormValue("login"),
+		"Providers": a.signinOffered(rq, next)})
 	return nil
 }
 

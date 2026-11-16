@@ -65,8 +65,12 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   configuration are the owners (level 0, not changed in the app); others are added on
   the page by login with a level (1–99, lower is more authority), kept in the app's
   data (`FrameworkAdmin`), so a change holds on every node with no restart. An account
-  that exists becomes an admin at once; anyone else is given an invitation link (two
-  days) and is one after signing up through it. A section or page that names a `level`
+  that exists becomes an admin at once; anyone else is one after signing up through
+  their sign-in link. **Admins sign in at a link of their own** (`/_dd/login?k=…`, made
+  on the Admins page, mailed where the app has a mail listener): it asks for the
+  password (or lets a new admin set one), is good for 1–365 days (30 by default)
+  counted from the last sign-in through it, and `/login` refuses an admin's account.
+  `caddy admin-link` remains the operator's way in when nobody has a link yet. A section or page that names a `level`
   is for admins whose own level is lower; an admin changes only admins of less
   authority than their own. See "Admins and their levels" in the framework's
   `docs/interface-model.md`. The layout draws the admin navigation on
@@ -80,6 +84,22 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   any node of the cluster may take the file) and the file is streamed through to the
   bucket, never kept here. Without a token the page says the library is not available.
   See the framework's `docs/interface-model.md`, "The admin area".
+- **Sign-in providers** (`/admin/sign-in`, the Sign-in section of the admin area, for
+  the admins who may see keys): an owner lets people sign in with an account they have
+  elsewhere — Google, or any OpenID Connect provider — as well as with a password. An
+  app has the page when its routing names a `signin` listener (`signin: {type:
+  signin}`), the way a service is on the Service Configuration page when the routing
+  names its listener; an app without one has no page and offers no provider.
+  The page then shows the redirect address to
+  register with the provider (`<the app's address>/_dd/signin/<provider>/callback`) and takes
+  the client ID and secret, kept sealed with the service settings. Once a provider is
+  switched on, the sign-in and sign-up pages offer "Continue with …". Accounts are matched by the email the provider says it verified;
+  an unverified one is refused. Someone new gets an account where the app takes
+  sign-ups; an account that already existed keeps its password, which is asked for
+  once before the provider is joined to it (the app never checked who made the
+  account), and after that its holder chooses either way at every sign-in. Admins are refused:
+  they use their own sign-in links. The server calls a provider over https only, and
+  never an address inside its own network.
 - **The admin link** for an app's first admin: `caddy admin-link --token-key FILE
   --login EMAIL --base-url URL [--ttl 10m]` (or `app.AdminLink`) mints
   `/_dd/admin?token=…`, signed with the token key and naming one of the `admins`

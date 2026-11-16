@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/timeofmind/data-driven-framework-go/listener"
+	"github.com/timeofmind/data-driven-framework-go/listener/signin"
 	"github.com/timeofmind/data-driven-framework-go/runtime"
 	"github.com/timeofmind/data-driven-framework-go/ux"
 )
@@ -97,7 +98,7 @@ func (a *App) configurable() []string {
 		if sources[name] {
 			continue
 		}
-		if info, ok := infos[cfg.Type]; !ok || info.Private {
+		if info, ok := infos[cfg.Type]; !ok || info.Private || cfg.Type == signin.Type { // signin has its own page
 			continue
 		}
 		out = append(out, name)

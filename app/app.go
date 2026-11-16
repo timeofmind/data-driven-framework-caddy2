@@ -112,16 +112,25 @@ type App struct {
 	admins  map[string]bool // the owners: the configuration's admin logins
 	// The admin area: its sections with the level each asks for, where the
 	// Admins page is, and the admins kept in the app's data as last read.
-	sections     []ux.Anchor
-	adminsPath   string
-	adminMu      sync.Mutex
-	adminCache   map[int64]int
-	adminCacheAt int64
-	loc          *time.Location
-	signer       *ux.Signer
-	cancel       context.CancelFunc
-	bg           context.Context // the app's lifetime, for what a listener runs in the background
-	hooks        hooks.Hooks     // what a destination takes from the app (readyListener)
+	sections   []ux.Anchor
+	adminsPath string
+	adminMu    sync.Mutex
+	// Sign-in providers (signin.go): where the page is, the providers as
+	// they are set up, their discovery documents; signinHTTP is a test's
+	// client in place of the guarded one.
+	signinPath    string
+	signinMu      sync.Mutex
+	signinCache   []signinProvider
+	signinCacheAt int64
+	signinMeta    map[string]*oidcMeta
+	signinHTTP    *http.Client
+	adminCache    map[int64]int
+	adminCacheAt  int64
+	loc           *time.Location
+	signer        *ux.Signer
+	cancel        context.CancelFunc
+	bg            context.Context // the app's lifetime, for what a listener runs in the background
+	hooks         hooks.Hooks     // what a destination takes from the app (readyListener)
 	// liveMemo: what checking a change for the event streams cost, kept a
 	// moment, shared by every stream (live.go).
 	liveMemo liveMemo
@@ -386,13 +395,23 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		adminsAt = adminsPathTaken
 		cfg.Logger.Warn("the app has a page of its own where the server's Admins page goes; the server's is at "+adminsPathTaken, "page", p.File)
 	}
-	adminSections, err := loadAdminSections(cfg.AppDir, pages, adminsAt)
+	// The Sign-in page is there when the routing names a signin listener,
+	// as a service is on the Service Configuration page when the routing
+	// names its listener.
+	signinAt := ""
+	if _, err := reg.AuthClass(); err == nil && signinRouted(reg) {
+		signinAt = signinPath
+		if p, _ := pages.Match(signinPath); p != nil {
+			signinAt = signinPathTaken // the app's own page there stays the app's
+		}
+	}
+	adminSections, err := loadAdminSections(cfg.AppDir, pages, adminsAt, signinAt)
 	if err != nil {
 		cancel()
 		reg.Close()
 		return nil, err
 	}
-	a.sections, a.adminsPath = adminSections, adminsAt
+	a.sections, a.adminsPath, a.signinPath = adminSections, adminsAt, signinAt
 	for _, n := range reg.ClassNames() {
 		if frameworkClass(n) {
 			continue
@@ -428,6 +447,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		SignedOut: func(rq *webux.Request) {
 			if rq.Viewer != nil {
 				a.endAllSessions(rq.R.Context(), rq.Viewer.ID)
+				a.dropIdentities(rq.R.Context(), rq.Viewer.ID)
 			}
 			a.clearSession(rq.W)
 		},
@@ -581,6 +601,10 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		a.site.ServeStatic(a.webRequest(rq), strings.Join(parts[1:], "/"))
 	case path == "/_dd/admin" && a.auth != nil:
 		a.wrap(rq, a.adminLink)
+	case path == loginLinkPath && a.auth != nil:
+		a.wrap(rq, a.adminLogin)
+	case strings.HasPrefix(path, signinRoute) && a.auth != nil:
+		a.wrap(rq, func(rq *request) error { return a.signin(rq, strings.TrimPrefix(path, signinRoute)) })
 	case path == mediaAPIPath || strings.HasPrefix(path, mediaAPIPath+"/"):
 		a.mediaAPI(rq, strings.Split(strings.Trim(strings.TrimPrefix(path, mediaAPIPath), "/"), "/"))
 	case parts[0] == "_dd" && len(parts) == 2:
@@ -593,6 +617,8 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		a.wrap(rq, a.mediaAdmin)
 	case path == a.adminsPath:
 		a.wrap(rq, a.adminsAdmin)
+	case path == a.signinPath && a.auth != nil:
+		a.wrap(rq, a.signinAdmin)
 	case path == "/signup" && a.auth != nil && (a.man.signupEnabled() || a.adminSignup(rq) != ""):
 		a.wrap(rq, a.signup)
 	case path == "/login" && a.auth != nil:

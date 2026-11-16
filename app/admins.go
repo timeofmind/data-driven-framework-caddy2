@@ -9,10 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/timeofmind/data-driven-framework-go/runtime"
-	"github.com/timeofmind/data-driven-framework-go/ux"
 )
 
 // Admins: the admin page every app has, where its admins are kept — who
@@ -34,16 +32,18 @@ import (
 // never removed.
 //
 // Someone added who has an account is an admin at once. Anyone else is
-// invited: the page gives a link (an admin link, good for inviteTTL) to
-// pass on, and they are an admin once they have signed up through it — an
-// account made with that login any other way is not made one, since the
-// login alone proves nothing.
+// invited: they are an admin once they have signed up through their login
+// link — an account made with that login any other way is not made one,
+// since the login alone proves nothing.
+//
+// Every admin signs in through a login link of their own (adminlogin.go),
+// made here: when an admin is added, and again whenever one is asked for.
+// It is shown once to the admin who made it and mailed to its admin where
+// the app can send mail.
 
 const (
 	// maxAdminLevel is the least authority an admin can be given.
 	maxAdminLevel = 99
-	// inviteTTL is how long an invited admin's link is good for.
-	inviteTTL = 48 * time.Hour
 	// The levels the server's own sections ask for unless admin.yaml says
 	// otherwise: keys and admins are for owners and level 1.
 	servicesLevel = 2
@@ -178,13 +178,17 @@ func (a *App) adminSection(rq *request, path string) (bool, error) {
 type adminsPage struct {
 	Message, Error        string
 	Link, LinkFor         string
-	LinkHours             int
+	LinkMailed            bool
+	LinkDays              int // the days the link just made is good for after each sign-in
+	Days, MaxDays         int // a new link's days: the default and the most
+	MyLink                string
+	OtherAdmins           []ownerRow // admins by the model's auth class (auth: admin)
 	Me                    string
 	MyLevel               int
 	MinLevel, MaxLevel    int
 	CanAdd                bool
 	LoginLabel, LoginType string
-	Owners                []string
+	Owners                []ownerRow
 	Admins                []adminRow
 	Sections              []adminSectionRow
 	Events                []adminEventRow
@@ -198,6 +202,14 @@ type adminRow struct {
 	Pending    bool
 	AddedBy    string
 	Manageable bool
+	Link       string // how their login link stands
+}
+
+// ownerRow is an admin the page does not keep: an owner, or an account the
+// model marks an admin.
+type ownerRow struct {
+	Login, Link string
+	CanLink     bool
 }
 
 type adminSectionRow struct{ Label, Reach string }
@@ -214,7 +226,7 @@ func (a *App) adminsAdmin(rq *request) error {
 	}
 	ctx := rq.ctx()
 	au := a.auth.Class.Auth
-	pg := adminsPage{Me: rq.p.Name, MyLevel: rq.p.Level, MinLevel: rq.p.Level + 1, MaxLevel: maxAdminLevel, LinkHours: int(inviteTTL / time.Hour), LoginType: "text"}
+	pg := adminsPage{Me: rq.p.Name, MyLevel: rq.p.Level, MinLevel: rq.p.Level + 1, MaxLevel: maxAdminLevel, Days: loginLinkDays, MaxDays: loginLinkMaxDays, LoginType: "text"}
 	pg.CanAdd = pg.MinLevel <= maxAdminLevel
 	if me, err := a.auth.Load(ctx, rq.p.ID); err == nil {
 		pg.Me = me.String(au.Login)
@@ -227,7 +239,7 @@ func (a *App) adminsAdmin(rq *request) error {
 		}
 	}
 	if rq.r.Method == http.MethodPost {
-		msg, link, linkFor, err := a.changeAdmins(rq, pg.Me)
+		msg, link, linkFor, err := a.changeAdmins(rq, strings.ToLower(pg.Me))
 		var he *httpError
 		switch {
 		case errors.As(err, &he):
@@ -238,6 +250,10 @@ func (a *App) adminsAdmin(rq *request) error {
 			// The link is shown once, on this answer: it is a way in, and
 			// does not belong in an address.
 			pg.Message, pg.Link, pg.LinkFor = msg, link, linkFor
+			if r := a.linkFor(ctx, linkFor); r != nil {
+				pg.LinkDays = int(r.Int("days"))
+				pg.LinkMailed = a.mailLoginLink(ctx, linkFor, link, pg.LinkDays)
+			}
 		default:
 			http.Redirect(rq.w, rq.r, a.url(a.adminsPath)+"?done="+url.QueryEscape(msg), http.StatusSeeOther)
 			return nil
@@ -245,10 +261,11 @@ func (a *App) adminsAdmin(rq *request) error {
 	} else if done := rq.r.URL.Query().Get("done"); done != "" {
 		pg.Message = done
 	}
+	pg.MyLink = a.linkState(ctx, strings.ToLower(pg.Me))
 	for login := range a.admins {
-		pg.Owners = append(pg.Owners, login)
+		pg.Owners = append(pg.Owners, ownerRow{Login: login, Link: a.linkState(ctx, login), CanLink: rq.p.Level == 0})
 	}
-	sort.Strings(pg.Owners)
+	sort.Slice(pg.Owners, func(i, j int) bool { return pg.Owners[i].Login < pg.Owners[j].Login })
 	recs, err := a.adminRecords().List(ctx, runtime.Query{Limit: 10000})
 	if err != nil {
 		return err
@@ -264,7 +281,21 @@ func (a *App) adminsAdmin(rq *request) error {
 			}
 		}
 		row.Manageable = rq.p.Level < row.Level
+		row.Link = a.linkState(ctx, strings.ToLower(row.Login))
 		pg.Admins = append(pg.Admins, row)
+	}
+	// The accounts the model's auth class marks admins (level 1): not kept
+	// here, but they need a login link like any admin.
+	if au.Admin != "" {
+		kept := a.dataAdmins(ctx)
+		marked, _ := a.auth.List(ctx, runtime.Query{Where: []runtime.Cond{runtime.Eq(au.Admin, true)}, Limit: 200})
+		for _, acc := range marked {
+			login := strings.ToLower(acc.String(au.Login))
+			if _, is := kept[acc.ID()]; is || a.admins[login] {
+				continue
+			}
+			pg.OtherAdmins = append(pg.OtherAdmins, ownerRow{Login: login, Link: a.linkState(ctx, login), CanLink: rq.p.Level < 1})
+		}
 	}
 	sort.SliceStable(pg.Admins, func(i, j int) bool {
 		if pg.Admins[i].Level != pg.Admins[j].Level {
@@ -309,7 +340,7 @@ func adminEventText(e *runtime.Record) string {
 	case "removed":
 		return fmt.Sprintf("removed %s (level %d)", login, level)
 	case "link":
-		return fmt.Sprintf("made a new link for %s", login)
+		return fmt.Sprintf("made a new login link for %s", login)
 	}
 	return e.String("action") + " " + login
 }
@@ -354,6 +385,10 @@ func (a *App) changeAdmins(rq *request, actor string) (msg, link, linkFor string
 		if err != nil {
 			return "", "", "", err
 		}
+		days, err := linkDays(f.Get("days"))
+		if err != nil {
+			return "", "", "", err
+		}
 		if a.admins[login] {
 			return "", "", "", fmt.Errorf("%s is an owner already.", login)
 		}
@@ -377,12 +412,16 @@ func (a *App) changeAdmins(rq *request, actor string) (msg, link, linkFor string
 			return "", "", "", err
 		}
 		a.forgetAdmins()
+		link, err := a.newLoginLink(rq, login, days, actor)
+		if err != nil {
+			return "", "", "", err
+		}
 		if vals["pending"] == false {
 			a.adminEvent(ctx, actor, "added", login, n)
-			return fmt.Sprintf("%s is now an admin, level %d.", login, n), "", "", nil
+			return fmt.Sprintf("%s is now an admin, level %d.", login, n), link, login, nil
 		}
 		a.adminEvent(ctx, actor, "invited", login, n)
-		return fmt.Sprintf("%s is invited, level %d. They have no account yet.", login, n), a.inviteLink(rq, login), login, nil
+		return fmt.Sprintf("%s is invited, level %d. They have no account yet.", login, n), link, login, nil
 	case "level":
 		r, err := row()
 		if err != nil {
@@ -408,36 +447,42 @@ func (a *App) changeAdmins(rq *request, actor string) (msg, link, linkFor string
 			return "", "", "", err
 		}
 		a.forgetAdmins()
+		a.dropLoginLink(ctx, r.String("login"))
 		a.adminEvent(ctx, actor, "removed", r.String("login"), int(r.Int("level")))
 		return fmt.Sprintf("%s is no longer an admin.", r.String("login")), "", "", nil
 	case "link":
-		r, err := row()
+		// A new login link for an admin: for oneself, for an admin of less
+		// authority, or — an owner — for another owner.
+		login := strings.ToLower(strings.TrimSpace(f.Get("login")))
+		days, err := linkDays(f.Get("days"))
 		if err != nil {
 			return "", "", "", err
 		}
-		if !r.Bool("pending") {
-			return "", "", "", fmt.Errorf("%s has an account: they sign in with their password.", r.String("login"))
+		target := -1
+		switch inv := a.invited(ctx, login); {
+		case a.admins[login]:
+			target = 0
+		case inv != nil:
+			target = int(inv.Int("level"))
+		default:
+			if acc, err := a.auth.First(ctx, runtime.Query{Where: []runtime.Cond{runtime.Eq(au.Login, login)}}); err == nil {
+				if p := a.principal(acc); p.Admin {
+					target = p.Level
+				}
+			}
 		}
-		a.adminEvent(ctx, actor, "link", r.String("login"), int(r.Int("level")))
-		return fmt.Sprintf("A new link for %s.", r.String("login")), a.inviteLink(rq, r.String("login")), r.String("login"), nil
+		if target < 0 {
+			return "", "", "", fmt.Errorf("%s is not an admin of this app.", login)
+		}
+		if login != actor && rq.p.Level >= target && !(target == 0 && rq.p.Level == 0) {
+			return "", "", "", errStatus(http.StatusForbidden, "You can make a login link for yourself and for admins of less authority than your own.")
+		}
+		link, err := a.newLoginLink(rq, login, days, actor)
+		if err != nil {
+			return "", "", "", err
+		}
+		a.adminEvent(ctx, actor, "link", login, target)
+		return fmt.Sprintf("A new login link for %s. Any link they had before no longer works.", login), link, login, nil
 	}
 	return "", "", "", errStatus(http.StatusBadRequest, "Unknown action")
-}
-
-// inviteLink mints the link an invited admin signs up through, at the
-// site's public address (the request's own when the server names none).
-func (a *App) inviteLink(rq *request, login string) string {
-	base := strings.TrimRight(a.cfg.BaseURL, "/")
-	if base == "" {
-		scheme := "http"
-		if rq.r.TLS != nil || strings.EqualFold(rq.r.Header.Get("X-Forwarded-Proto"), "https") {
-			scheme = "https"
-		}
-		base = scheme + "://" + rq.r.Host
-	}
-	if a.cfg.BasePath != "" && !strings.HasSuffix(base, a.cfg.BasePath) {
-		base += a.cfg.BasePath
-	}
-	tok := a.signer.Sign(ux.Claims{Admin: login, Exp: time.Now().Add(inviteTTL).Unix()})
-	return base + "/_dd/admin?token=" + url.QueryEscape(tok)
 }
