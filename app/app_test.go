@@ -289,6 +289,13 @@ func TestThemeAndManifest(t *testing.T) {
 	if code, _, _ := b2.get("/static/style.css"); code != 200 {
 		t.Error("default stylesheet missing")
 	}
+	// The component library: its script by its plain name, its stylesheet with the static files.
+	if code, js, _ := b2.get("/_dd/components.js"); code != 200 || !strings.Contains(js, "dd.component = component") {
+		t.Errorf("components.js: %d", code)
+	}
+	if code, css, _ := b2.get("/static/components.css"); code != 200 || !strings.Contains(css, "data-dd-radius") {
+		t.Errorf("components.css: %d", code)
+	}
 }
 
 func fitFile(t *testing.T, start time.Time, km float64, secs float64) []byte {
