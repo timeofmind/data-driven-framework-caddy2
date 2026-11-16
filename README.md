@@ -84,6 +84,11 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   any node of the cluster may take the file) and the file is streamed through to the
   bucket, never kept here. Without a token the page says the library is not available.
   See the framework's `docs/interface-model.md`, "The admin area".
+- **A notice when saved changes are not being stored**: a destination that keeps
+  refusing an entry of the change log (a database that will not take a row) is shown
+  to admins on every page of the admin area once it has gone on for a minute — which
+  destination, the change, the reason, how many changes wait behind it — with any
+  changes that were set aside (parked). Until then it was only in the server's log.
 - **Sign-in providers** (`/admin/sign-in`, the Sign-in section of the admin area, for
   the admins who may see keys): an owner lets people sign in with an account they have
   elsewhere — Google, or any OpenID Connect provider — as well as with a password. An

@@ -443,7 +443,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	a.site, err = webux.New(webux.Options{
 		Engine: a.engine, Name: man.Name, Tagline: man.Tagline, Nav: man.Nav, ThemeDir: man.ThemeDir(),
 		Signup: a.auth != nil && man.signupEnabled(), Reset: a.resetEnabled(), Log: cfg.Logger,
-		Upload: a.uploadView, UploadInfo: a.uploadInfo, AdminSections: adminSections,
+		Upload: a.uploadView, UploadInfo: a.uploadInfo, AdminSections: adminSections, AdminNotices: a.adminNotices,
 		SignedOut: func(rq *webux.Request) {
 			if rq.Viewer != nil {
 				a.endAllSessions(rq.R.Context(), rq.Viewer.ID)
