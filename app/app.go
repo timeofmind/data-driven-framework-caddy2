@@ -441,7 +441,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	}
 	a.engine.Signer = a.signer
 	a.site, err = webux.New(webux.Options{
-		Engine: a.engine, Name: man.Name, Tagline: man.Tagline, Nav: man.Nav, ThemeDir: man.ThemeDir(),
+		Engine: a.engine, Name: man.Name, Tagline: man.Tagline, Nav: man.Nav, ThemeDir: man.ThemeDir(), MobileDir: man.MobileDir(),
 		Signup: a.auth != nil && man.signupEnabled(), Reset: a.resetEnabled(), Log: cfg.Logger,
 		Upload: a.uploadView, UploadInfo: a.uploadInfo, AdminSections: adminSections, AdminNotices: a.adminNotices,
 		SignedOut: func(rq *webux.Request) {

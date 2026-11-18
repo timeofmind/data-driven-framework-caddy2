@@ -22,6 +22,7 @@ import (
 //	pages: [pages/*.yaml]            # pages and their interface views (default)
 //	routing: [routing/*.yaml]        # listeners and routes (default; optional)
 //	theme: theme                     # templates and static/ (default "theme")
+//	mobile: mobile                   # templates that replace the theme's for a phone (default "mobile")
 //	timezone: America/Vancouver      # "today", and the default for imports
 //	signup: {enabled: true, intro: "Shown above the sign-up form"}
 //	password_reset: {class: PasswordReset, expires: 1h}   # /forgot and /reset (see reset.go)
@@ -33,6 +34,7 @@ type Manifest struct {
 	Pages    []string `yaml:"pages"`
 	Routing  []string `yaml:"routing"`
 	Theme    string   `yaml:"theme"`
+	Mobile   string   `yaml:"mobile"`
 	Timezone string   `yaml:"timezone"`
 	Signup   struct {
 		Enabled *bool  `yaml:"enabled"`
@@ -122,6 +124,9 @@ func LoadManifest(dir string) (*Manifest, error) {
 	if m.Theme == "" {
 		m.Theme = "theme"
 	}
+	if m.Mobile == "" {
+		m.Mobile = "mobile"
+	}
 	if len(m.Model) == 0 {
 		m.Model = []string{"model/*.yaml"}
 	}
@@ -171,6 +176,15 @@ func (m *Manifest) PageFiles() ([]string, error) { return m.files("pages", m.Pag
 // ThemeDir is the absolute theme directory ("" if it does not exist).
 func (m *Manifest) ThemeDir() string {
 	d := filepath.Join(m.dir, m.Theme)
+	if st, err := os.Stat(d); err == nil && st.IsDir() {
+		return d
+	}
+	return ""
+}
+
+// MobileDir is the absolute mobile templates directory ("" if it does not exist).
+func (m *Manifest) MobileDir() string {
+	d := filepath.Join(m.dir, m.Mobile)
 	if st, err := os.Stat(d); err == nil && st.IsDir() {
 		return d
 	}

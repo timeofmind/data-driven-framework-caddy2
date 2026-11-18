@@ -11,6 +11,7 @@ my-app/                      ← the application (its own repo)
                              access rules and behaviour (data-driven-framework-go)
   pages/*.yaml               the interface: one file per page, with its interface views
   theme/                     the look: any template to replace, static/style.css …
+  mobile/                    optional: templates that replace the theme's for a phone
 ```
 
 The data model and the page files are both defined — and checked — by
@@ -203,6 +204,7 @@ tagline: "One line under the name"
 model: [model/*.yaml]              # globs, relative to the app directory (default)
 pages: [pages/*.yaml]              # default
 theme: theme                       # default "theme"
+mobile: mobile                     # default "mobile": templates for a phone (see Themes)
 timezone: America/Vancouver        # "today", and the default for imports
 signup: {enabled: true, intro: "Shown above the sign-up form"}
 password_reset: {class: PasswordReset, expires: 1h}   # /forgot emails a link, /reset?code=… sets the password
@@ -219,7 +221,10 @@ A theme replaces any of web-ux's templates by file name — `layout.html` (defin
 `iv-list.html`, `iv-calendar.html`, `iv-detail.html`, `iv-form.html`,
 `iv-chips.html`, `iv-upload.html`, `iv-text.html`, and `confirm`, `error`, `login`,
 `signup`, `forgot`, `reset`, `feed` — and supplies `static/` (served at `/static/…`). Anything it leaves
-out comes from the built-in look. Calendar items and tags carry CSS classes for enum
+out comes from the built-in look. An app's `mobile/` replaces any of those templates again
+for a phone (its User-Agent, or `?dd_view=mobile|desktop`, kept in a cookie): the same
+pages at the same addresses, drawn for a small screen (framework
+`docs/interface-model.md`, "Mobile templates"). Calendar items and tags carry CSS classes for enum
 values (`<slot>-<value>`, `tag-<value>`) so a theme can colour them.
 
 ## File readers
