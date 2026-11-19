@@ -370,3 +370,53 @@ func TestServiceConfigurationProviders(t *testing.T) {
 		t.Fatalf("the CSP is the app's own again: %s", h.Get("Content-Security-Policy"))
 	}
 }
+
+// A card shows only its mandatory settings; the others fold under Advanced.
+// A setting that is one of a few choices is a select, and the settings of
+// the other choices are drawn hidden (showif.js switches them): the image
+// listener keeps its pictures in the media library unless a bucket is chosen.
+func TestServiceConfigurationAdvancedAndChoices(t *testing.T) {
+	if os.Getenv("DDF_TEST_MYSQL_DSN") != "" {
+		t.Skip("the routed fixture is SQLite")
+	}
+	t.Setenv("DD_MEDIA_TOKEN", "dmt_test")
+	dir := servicesFixture(t, true)
+	os.WriteFile(filepath.Join(dir, "routing", "walkclub.yaml"), []byte(fmt.Sprintf(`
+listeners:
+  db:       {type: sqlite, dsn: %q}
+  pictures: {type: image, providers: openai}
+routes:
+  default: {source: db, flows_to: [db]}
+`, filepath.Join(dir, "club.db"))), 0o644)
+	_, srv := newServicesApp(t, dir, []byte("a-token-key-shared-by-the-nodes"))
+	b := newBrowser(t, srv)
+	b.signup("admin@example.com", "Admin")
+	code, body, _ := b.get("/admin/services")
+	if code != http.StatusOK {
+		t.Fatalf("admin page: %d\n%s", code, body)
+	}
+	card := body[strings.Index(body, `id="svc-pictures"`):]
+	adv := strings.Index(card, `<details class="advanced"`)
+	if adv < 0 {
+		t.Fatalf("no Advanced fold:\n%s", card)
+	}
+	if k := strings.Index(card, `name="s_openai_api_key"`); k < 0 || k > adv {
+		t.Errorf("the provider's key is a mandatory setting, shown before the fold")
+	}
+	if s := strings.Index(card, `name="s_storage"`); s < adv || !strings.Contains(card, `<select id="f-s_storage" name="s_storage"`) || !strings.Contains(card, `<option value="media" selected>`) {
+		t.Errorf("storage is an optional choice, a select under Advanced, media chosen")
+	}
+	for _, f := range []string{"s_bucket", "s_access_key", "s_endpoint"} {
+		i := strings.Index(card, `data-dd-field="`+f+`"`)
+		if i < 0 {
+			t.Errorf("%s is drawn", f)
+			continue
+		}
+		if tag := card[i : i+strings.Index(card[i:], ">")]; !strings.Contains(tag, "data-dd-show-if=") || !strings.Contains(tag, " hidden") {
+			t.Errorf("%s belongs to a bucket choice and is hidden while the media library is chosen: %s", f, tag)
+		}
+	}
+	if !strings.Contains(body, "/_dd/showif") {
+		t.Error("the page loads showif.js")
+	}
+}

@@ -37,7 +37,9 @@ type serviceView struct {
 	Name, Type, Summary string
 	Problem             string // why it is not open; "" when it is
 	Fixed               []fixedSetting
-	Fields              []ux.FormField
+	Fields              []ux.FormField // the mandatory settings, shown
+	Advanced            []ux.FormField // the others, folded under "Advanced"
+	AdvancedOpen        bool           // one of them is set: the fold starts open
 	Providers           []providerView
 	// ProvidersFixed: the routing file names the providers in use; the
 	// cards are those. Otherwise the cards are every kind the type offers,
@@ -55,6 +57,8 @@ type providerView struct {
 	Rank                int
 	Fixed               []fixedSetting
 	Fields              []ux.FormField
+	Advanced            []ux.FormField
+	AdvancedOpen        bool
 }
 
 type fixedSetting struct{ Name, Value string }
@@ -314,9 +318,9 @@ func (a *App) serviceViews(ctx context.Context) []serviceView {
 				sv.Fixed = append(sv.Fixed, fixedSetting{Name: k, Value: v})
 			}
 		}
-		sv.Fields = fieldsFor(own, cfg.Settings, values[name], secrets[name])
+		sv.Fields, sv.Advanced, sv.AdvancedOpen = fieldsFor(own, cfg.Settings, values[name], secrets[name])
 		for i := range providers {
-			providers[i].Fields = fieldsFor(providerSettings(info, providers[i].Type, providers[i].Name), cfg.Settings, values[name], secrets[name])
+			providers[i].Fields, providers[i].Advanced, providers[i].AdvancedOpen = fieldsFor(providerSettings(info, providers[i].Type, providers[i].Name), cfg.Settings, values[name], secrets[name])
 		}
 		sv.Providers = providers
 		out = append(out, sv)
@@ -327,9 +331,36 @@ func (a *App) serviceViews(ctx context.Context) []serviceView {
 // fieldsFor makes the form fields of settings not given by the routing
 // file: a stored plain value shown, a stored secret never — blank keeps it,
 // a checkbox forgets it.
-func fieldsFor(settings []listener.Setting, inRouting map[string]string, values map[string]string, secrets map[string]bool) []ux.FormField {
-	var out []ux.FormField
+//
+// The mandatory settings come first; the others (a model preference, a timeout,
+// a bucket the app may do without) are returned apart, for the page to fold
+// under "Advanced" so a first look shows only what must be given. open says
+// one of the others holds a value, so the fold is not closed over it.
+func fieldsFor(settings []listener.Setting, inRouting map[string]string, values map[string]string, secrets map[string]bool) (main, advanced []ux.FormField, open bool) {
+	current := func(name string) string { // a setting's value as the page starts: stored, routed, else its default
+		if v, ok := inRouting[name]; ok {
+			return v
+		}
+		if v := values[name]; v != "" {
+			return v
+		}
+		for _, o := range settings {
+			if o.Name == name {
+				if o.Default != "" {
+					return o.Default
+				}
+				if len(o.Choices) > 0 {
+					return o.Choices[0].Value
+				}
+			}
+		}
+		return ""
+	}
 	for _, s := range settings {
+		out := &main
+		if !s.Required {
+			out = &advanced
+		}
 		if _, fixed := inRouting[s.Name]; fixed {
 			continue
 		}
@@ -340,6 +371,23 @@ func fieldsFor(settings []listener.Setting, inRouting map[string]string, values 
 		f := ux.FormField{Name: "s_" + s.Name, Label: s.Name, Type: "text", Required: s.Required, Help: help, Placeholder: s.Default}
 		if s.Multiline {
 			f.Type = "textarea"
+		}
+		if len(s.Choices) > 0 {
+			// one of a few: a select, and the fields of the other choices hidden
+			f.Type, f.Placeholder = "select", ""
+			cur := current(s.Name)
+			for _, c := range s.Choices {
+				f.Options = append(f.Options, ux.Option{Value: c.Value, Label: c.Label, Selected: c.Value == cur})
+			}
+		}
+		if name, vals, ok := strings.Cut(s.ShownWhen, "="); ok {
+			f.ShowIf = "s_" + name + "=" + vals
+			f.Hidden = true
+			for _, v := range strings.Split(vals, ",") {
+				if strings.TrimSpace(v) == current(name) {
+					f.Hidden = false
+				}
+			}
 		}
 		stored, isStored := values[s.Name]
 		if s.Secret {
@@ -356,12 +404,16 @@ func fieldsFor(settings []listener.Setting, inRouting map[string]string, values 
 		} else if isStored {
 			f.Value = stored
 		}
-		out = append(out, f)
+		if !s.Required && isStored && (stored != "" || secrets[s.Name]) && !(len(s.Choices) > 0 && stored == current(s.Name) && stored == s.Default) {
+			open = true
+		}
+		*out = append(*out, f)
 		if s.Secret && isStored {
-			out = append(out, ux.FormField{Name: "clear_" + s.Name, Label: "Forget the stored " + s.Name, Type: "checkbox"})
+			cl := ux.FormField{Name: "clear_" + s.Name, Label: "Forget the stored " + s.Name, Type: "checkbox", ShowIf: f.ShowIf, Hidden: f.Hidden}
+			*out = append(*out, cl)
 		}
 	}
-	return out
+	return main, advanced, open
 }
 
 // saveService stores a listener's posted settings and opens it again with
