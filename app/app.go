@@ -249,6 +249,27 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	if !cfg.NoTimers {
 		reg.StartTimers(bg, cfg.Logger)
 	}
+	// What the framework derives and keeps (docs/searches-at-scale.md):
+	// kept values new to the data, and the view indexes of the pages' lists
+	// not built yet — in the background; lists read through the join
+	// classes until their index is ready.
+	settle := func() {
+		start := time.Now()
+		if err := reg.SettleDerived(bg); err != nil {
+			cfg.Logger.Error("view indexes and kept values: not settled; lists read through their join classes", "error", err)
+			return
+		}
+		if n := len(m.ViewIndexes()); n > 0 {
+			cfg.Logger.Info("view indexes ready", "count", n, "took_ms", time.Since(start).Milliseconds())
+		}
+	}
+	if reg.HasDerived() {
+		if reg.Dialect != nil && reg.Dialect.Name() == "sqlite" {
+			settle() // one writer at a time: before anything else writes
+		} else {
+			go settle()
+		}
+	}
 	// The destinations that answer records (mail, llm, paypal, shipping)
 	// take what they need from the app: records and their children for
 	// their templates, and the outcome written back onto the record.
