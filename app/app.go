@@ -262,21 +262,27 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	// kept values new to the data, and the view indexes of the pages' lists
 	// not built yet — in the background; lists read through the join
 	// classes until their index is ready.
-	settle := func() {
+	settle := func() error {
 		start := time.Now()
 		if err := reg.SettleDerived(bg); err != nil {
-			cfg.Logger.Error("view indexes and kept values: not settled; lists read through their join classes", "error", err)
-			return
+			return err
 		}
 		if n := len(m.ViewIndexes()); n > 0 {
 			cfg.Logger.Info("view indexes ready", "count", n, "took_ms", time.Since(start).Milliseconds())
 		}
+		return nil
 	}
 	if reg.HasDerived() {
 		if reg.Dialect != nil && reg.Dialect.Name() == "sqlite" {
-			settle() // one writer at a time: before anything else writes
+			// one writer at a time: before anything else writes
+			if err := settle(); err != nil {
+				cfg.Logger.Error("view indexes and kept values: not settled; lists read through their join classes", "error", err)
+			}
 		} else {
-			go settle()
+			// In a rolling upgrade the first node restarted can't settle while the
+			// others still run a version without the new view index (they refuse
+			// its rows): it tries again until they have caught up.
+			go settleUntilDone(bg, settle, cfg.Logger, settleRetryFirst, settleRetryMax)
 		}
 	}
 	// The destinations that answer records (mail, llm, paypal, shipping)
@@ -1085,4 +1091,31 @@ func (a *App) csp() string {
 		}
 	}
 	return "default-src 'self'; " + img + "; style-src 'self'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+}
+
+// How soon a settle that failed is tried again, doubling up to the most.
+var (
+	settleRetryFirst = 30 * time.Second
+	settleRetryMax   = 10 * time.Minute
+)
+
+// settleUntilDone runs try until it succeeds or ctx ends, waiting first, then
+// twice as long each time, up to most, between attempts.
+func settleUntilDone(ctx context.Context, try func() error, log *slog.Logger, first, most time.Duration) {
+	wait := first
+	for {
+		err := try()
+		if err == nil {
+			return
+		}
+		log.Error("view indexes and kept values: not settled; lists read through their join classes until they are", "error", err, "retry_in", wait.String())
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		if wait *= 2; wait > most {
+			wait = most
+		}
+	}
 }

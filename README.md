@@ -114,6 +114,12 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   minutes by default, on any node, not single-use.
 - **A JSON API** at `/api/v1/<resource>` for every class, with a generated OpenAPI 3
   document; `read: owner` fields only reach their owner.
+- **View indexes and kept values** (framework `docs/searches-at-scale.md`) are settled
+  on start: on SQLite before serving, otherwise in the background, lists reading
+  through their join classes until then. A node that can't settle — in a rolling
+  upgrade, the first node restarted, while the others still run a version without the
+  new index and refuse its rows — tries again (after 30 s, doubling to every 10 min)
+  until it does.
 - **Timed triggers**: the model's `at` triggers (a game's clock running out) are fired
   by the cluster's leader, or by the only node, through the normal save path; `timers off`
   in the `datadriven` block keeps a node from firing them.
