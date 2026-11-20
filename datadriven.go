@@ -124,6 +124,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		MaxUploadBytes: h.MaxUploadBytes,
 		MediaURL:       os.Getenv("DD_MEDIA_URL"),
 		MediaToken:     os.Getenv("DD_MEDIA_TOKEN"),
+		MediaPublic:    os.Getenv("DD_MEDIA_PUBLIC"),
 		Logger:         ctx.Slogger(),
 		ClientIP: func(r *http.Request) string {
 			if v, ok := caddyhttp.GetVar(r.Context(), caddyhttp.ClientIPVarKey).(string); ok {

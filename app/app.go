@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -89,6 +90,11 @@ type Config struct {
 	// when not set here; no token, no library (the page says so).
 	MediaURL   string
 	MediaToken string
+	// MediaPublic is where the library's files are served from (the node's
+	// DD_MEDIA_PUBLIC, e.g. the bucket's public address): the pages may load
+	// pictures from there — a picture the image listener drew, a file an admin
+	// put in the library — as from the app's own origin.
+	MediaPublic string
 
 	// ClientIP returns the client address for rate limiting; defaults to RemoteAddr.
 	ClientIP func(*http.Request) string
@@ -1039,15 +1045,28 @@ func (a *App) rateLimited(rq *request, action string, n int, window time.Duratio
 	return !a.limiter.allow(action+"|"+a.clientIP(rq.r), n, window)
 }
 
+// origin is a URL's scheme and host ("" for one without both).
+func origin(u string) string {
+	p, err := url.Parse(strings.TrimSpace(u))
+	if err != nil || p.Scheme == "" || p.Host == "" {
+		return ""
+	}
+	return p.Scheme + "://" + p.Host
+}
+
 // amazonPayHosts are what Amazon Pay's checkout needs on the page: its
 // script (one host per region) in a frame of its own, and Amazon's pages.
 const amazonPayHosts = "https://static-na.payments-amazon.com https://static-eu.payments-amazon.com https://static-fe.payments-amazon.com https://*.payments-amazon.com https://*.amazon.com https://*.amazon.co.uk https://*.amazon.de https://*.amazon.fr https://*.amazon.it https://*.amazon.es https://*.amazon.co.jp"
 
 // csp is the page's Content Security Policy: the app's own origin alone —
+// pictures also from its media library (MediaPublic) and its image_hosts —
 // and, while a payment listener has Amazon Pay open (a card ticked on the
 // Service Configuration page), Amazon Pay's hosts for its button.
 func (a *App) csp() string {
 	img := "img-src 'self' data:"
+	if o := origin(a.cfg.MediaPublic); o != "" {
+		img += " " + o
+	}
 	for _, h := range a.man.ImageHosts {
 		if h = strings.TrimSpace(h); h != "" {
 			img += " " + h

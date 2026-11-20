@@ -240,3 +240,25 @@ func TestMediaUnavailable(t *testing.T) {
 		t.Fatalf("app admin page %d: nav missing", code)
 	}
 }
+
+// The pages may show pictures from the app's media library (a drawn picture, an
+// uploaded file): its public origin is in the policy's img-src.
+func TestCSPAllowsMediaLibrary(t *testing.T) {
+	if os.Getenv("DDF_TEST_MYSQL_DSN") != "" {
+		t.Skip("the routed fixture is SQLite")
+	}
+	dir := servicesFixture(t, true)
+	cfg := Config{AppDir: dir, Driver: "sqlite", DSN: filepath.Join(dir, "club.db"), Admins: []string{"admin@example.com"},
+		TokenKey: []byte("0123456789abcdef0123456789abcdef"), MediaPublic: "https://media-bucket.s3.us-east-1.amazonaws.com/",
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	a, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(a)
+	defer func() { srv.Close(); a.Close() }()
+	_, _, h := newBrowser(t, srv).get("/")
+	if csp := h.Get("Content-Security-Policy"); !strings.Contains(csp, "img-src 'self' data: https://media-bucket.s3.us-east-1.amazonaws.com;") {
+		t.Fatalf("policy: %s", csp)
+	}
+}

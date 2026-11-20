@@ -183,7 +183,10 @@ example.com {
 ```
 
 From the environment: `DD_MEDIA_URL` and `DD_MEDIA_TOKEN` (the hosting's media library
-for the Media page; absent on a self-hosted app).
+for the Media page; absent on a self-hosted app), and `DD_MEDIA_PUBLIC`, where the
+library's files are served from: its origin is added to the pages' `img-src`, so a
+picture the image listener drew or an admin uploaded shows (without it the browser
+refuses any picture not on the app's own origin or in `image_hosts`).
 
 The handler answers its pages' paths, `/signup`, `/login`, `/logout`, `/me`, `/forgot`
 and `/reset` (when `password_reset` names the app's class of reset codes: it belongs to
