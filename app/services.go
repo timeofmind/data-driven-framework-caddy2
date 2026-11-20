@@ -195,7 +195,8 @@ func storedSettings(ctx context.Context, reg *runtime.Registry, tokenKey []byte,
 	if err != nil {
 		return values, secrets
 	}
-	recs, err := h.List(ctx, runtime.Query{Limit: 10000})
+	// From the database as it is now: another node may have saved them.
+	recs, err := h.ListSource(ctx, runtime.Query{Limit: 10000})
 	if err != nil {
 		return values, secrets
 	}
@@ -233,6 +234,76 @@ func reopenStored(ctx context.Context, reg *runtime.Registry, tokenKey []byte, l
 	}
 }
 
+// settingsEvery is how often a node reads the stored settings again, for
+// those an admin saved on another node of the app.
+var settingsEvery = 30 * time.Second
+
+// watchSettings keeps the node's destinations opened with the settings
+// stored: a save on the Service Configuration page reopens a destination on
+// the node that served it, and the app's other nodes (and a preview sharing
+// its database) learn of it here.
+func (a *App) watchSettings() {
+	t := time.NewTicker(settingsEvery)
+	defer t.Stop()
+	for {
+		select {
+		case <-a.bg.Done():
+			return
+		case <-t.C:
+			a.syncSettings(a.bg)
+		}
+	}
+}
+
+// syncSettings opens again every destination whose stored settings differ
+// from those it was last opened with. A setting that cannot be read was
+// logged at the start, and is not logged again on every pass.
+func (a *App) syncSettings(ctx context.Context) {
+	a.settingsMu.Lock()
+	defer a.settingsMu.Unlock()
+	values, _ := storedSettings(ctx, a.Reg, a.cfg.TokenKey, slog.New(slog.DiscardHandler))
+	for name, cfg := range a.Reg.Routing.Listeners {
+		if _, ok := a.Reg.Listeners[name].(*listener.Switch); !ok {
+			continue
+		}
+		if sameSettings(a.Reg.Settings(name), withStored(cfg.Settings, values[name])) {
+			continue
+		}
+		if err := a.Reg.Reopen(ctx, name, values[name], a.readyListener); err != nil {
+			a.log.Warn("a service's settings changed on another node; it does not open with them", "listener", name, "error", err)
+			continue
+		}
+		a.log.Info("a service's settings changed on another node; opened with them", "listener", name)
+	}
+}
+
+// withStored is the routing's settings with the stored ones filling what
+// the routing does not give (as the registry merges them).
+func withStored(routed, stored map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range stored {
+		if v != "" {
+			out[k] = v
+		}
+	}
+	for k, v := range routed {
+		out[k] = v
+	}
+	return out
+}
+
+func sameSettings(x, y map[string]string) bool {
+	if len(x) != len(y) {
+		return false
+	}
+	for k, v := range x {
+		if w, ok := y[k]; !ok || w != v {
+			return false
+		}
+	}
+	return true
+}
+
 // services serves the page and its saves: admins only, with the authority
 // the section asks for.
 func (a *App) services(rq *request) error {
@@ -252,7 +323,11 @@ func (a *App) services(rq *request) error {
 			http.Redirect(rq.w, rq.r, a.url(servicesPath)+"?saved="+url.QueryEscape(name)+"#svc-"+url.PathEscape(name), http.StatusSeeOther)
 			return nil
 		}
-	} else if saved := rq.r.URL.Query().Get("saved"); saved != "" {
+	} else {
+		// what another node saved, before this one shows its state
+		a.syncSettings(rq.ctx())
+	}
+	if saved := rq.r.URL.Query().Get("saved"); rq.r.Method != http.MethodPost && saved != "" {
 		if err := a.Reg.Unconfigured(saved); err != nil {
 			pg.Message = fmt.Sprintf("Saved %s. It is still not configured: %v", saved, err)
 		} else {

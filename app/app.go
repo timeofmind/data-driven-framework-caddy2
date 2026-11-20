@@ -134,6 +134,9 @@ type App struct {
 	// liveMemo: what checking a change for the event streams cost, kept a
 	// moment, shared by every stream (live.go).
 	liveMemo liveMemo
+	// settingsMu: one pass at a time of opening destinations again with the
+	// stored settings (syncSettings).
+	settingsMu sync.Mutex
 }
 
 // New loads the model and pages, connects, brings the database up to date
@@ -476,6 +479,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	if err != nil {
 		return fail(err)
 	}
+	go a.watchSettings()
 	return a, nil
 }
 

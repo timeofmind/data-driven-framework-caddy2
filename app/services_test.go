@@ -420,3 +420,42 @@ routes:
 		t.Error("the page loads showif.js")
 	}
 }
+
+// Settings saved on one node reach the app's other nodes (sharing its
+// database): each reads them again on the Service Configuration page and
+// every settingsEvery, and opens the destination with them.
+func TestServiceSettingsReachOtherNodes(t *testing.T) {
+	if os.Getenv("DDF_TEST_MYSQL_DSN") != "" {
+		t.Skip("the routed fixture is SQLite")
+	}
+	dir := servicesFixture(t, true)
+	key := []byte("a-token-key-shared-by-the-nodes")
+	a, srv := newServicesApp(t, dir, key)
+	other, srv2 := newServicesApp(t, dir, key)
+	b := newBrowser(t, srv)
+	b.signup("admin@example.com", "Admin")
+	if code, body, _ := b.post("/admin/services", url.Values{"listener": {"coach"}, "s_claude_api_key": {"sk-test"}}); code != http.StatusSeeOther {
+		t.Fatalf("save coach: %d\n%s", code, extractAlert(body))
+	}
+	if a.Reg.Unconfigured("coach") != nil || other.Reg.Unconfigured("coach") == nil {
+		t.Fatalf("the save opens coach on its node alone, at first: %v / %v", a.Reg.Unconfigured("coach"), other.Reg.Unconfigured("coach"))
+	}
+	// The other node's page reads the settings again before showing them.
+	b2 := *b // the same signed-in admin (cookies go by host, not port)
+	b2.base = srv2.URL
+	code, body, _ := b2.get("/admin/services")
+	if code != http.StatusOK || other.Reg.Unconfigured("coach") != nil {
+		t.Fatalf("the other node's page: %d %v", code, other.Reg.Unconfigured("coach"))
+	}
+	if strings.Contains(body, "claude_api_key is required") {
+		t.Fatal("the page shows coach as configured")
+	}
+	// A setting forgotten on the first node: the other node's pass closes it.
+	if code, body, _ := b.post("/admin/services", url.Values{"listener": {"coach"}, "clear_claude_api_key": {"1"}}); code != http.StatusSeeOther {
+		t.Fatalf("forget: %d\n%s", code, extractAlert(body))
+	}
+	other.syncSettings(context.Background())
+	if other.Reg.Unconfigured("coach") == nil {
+		t.Fatal("the other node waits again once the key is forgotten")
+	}
+}
