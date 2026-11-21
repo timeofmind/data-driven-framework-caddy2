@@ -393,6 +393,9 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 			}
 			return nil
 		},
+		// A language model's JSON answer made into a record (an llm template's
+		// import), owned by the asking record's owner.
+		Import:  reg.ImportAnswer,
 		Leading: reg.Leading,
 	}
 	key := cfg.TokenKey

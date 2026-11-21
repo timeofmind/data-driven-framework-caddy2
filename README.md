@@ -123,6 +123,10 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
 - **Timed triggers**: the model's `at` triggers (a game's clock running out) are fired
   by the cluster's leader, or by the only node, through the normal save path; `timers off`
   in the `datadriven` block keeps a node from firing them.
+- **Records from answers**: an `llm` template with `json: true` and `import: {class, link}`
+  has its answer made into a record of that class (its import block: fields, children and
+  their children — a workout's sets and intervals), owned by the asking record's owner,
+  the new id written onto the asking record; all or nothing.
 - **Language models**: a class routed to an `llm` listener (framework `listener/llm`)
   has each new record rendered through a template in the app's `llm/` directory (or a
   record of the listener's `template_class`) and asked of the configured providers in
