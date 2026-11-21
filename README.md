@@ -126,7 +126,8 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
 - **Records from answers**: an `llm` template with `json: true` and `import: {class, link}`
   has its answer made into a record of that class (its import block: fields, children and
   their children — a workout's sets and intervals), owned by the asking record's owner,
-  the new id written onto the asking record; all or nothing.
+  the new id written onto the asking record with its answered status, in one write; all
+  or nothing.
 - **Language models**: a class routed to an `llm` listener (framework `listener/llm`)
   has each new record rendered through a template in the app's `llm/` directory (or a
   record of the listener's `template_class`) and asked of the configured providers in
