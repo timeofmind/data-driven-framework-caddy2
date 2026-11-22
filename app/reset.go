@@ -3,31 +3,77 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/timeofmind/data-driven-framework-go/listener"
+	"github.com/timeofmind/data-driven-framework-go/listener/mail"
 	"github.com/timeofmind/data-driven-framework-go/runtime"
+	"github.com/timeofmind/data-driven-framework-go/ux"
 )
 
-// Password reset, when app.yaml says so:
+// Password reset: every app whose members sign in with a password has it,
+// with nothing in the app to declare. /forgot asks for the login and, for an
+// account that exists, mails a link through the app's mail listener (the
+// builder sets one up when it publishes the app):
+// {{base}}/reset?code=<a token signed with the app's token key, naming the
+// account, good for an hour, and bound to the account's current password, so
+// it stops working once the password changes — used once, nothing stored>.
+// Without a configured mail listener (a preview) /forgot says the app cannot
+// send mail yet. The answer is the same whether or not the account exists.
+// /reset?code=… names the account by the code, takes the new password, sets it
+// on the account and signs the person in.
+//
+// An app may instead keep reset codes in a class of its own, which flows
+// wherever its routing sends it (an older form, still honoured):
 //
 //	password_reset: {class: PasswordReset, expires: 1h}
 //
-// The class is the app's: it belongs to the auth class and has slots code,
-// expires_at and used_at (and email, filled in if present). /forgot asks for
-// the login and, for an account that exists, saves a record of that class
-// with a fresh code — which flows wherever the routing sends the class, a
-// mail listener with a template that puts {{.base_url}}/reset?code={{.record.code}}
-// in the message. The answer is the same whether or not the account exists.
-// /reset?code=… names the account by the code (unused, unexpired), takes the
-// new password, sets it on the account, marks the code used and signs the
-// person in.
+// The class belongs to the auth class and has slots code, expires_at and
+// used_at (and email, filled in if present).
 func (a *App) resetEnabled() bool {
-	return a.auth != nil && a.man.PasswordReset.Class != "" && a.Reg.Model.Class(a.man.PasswordReset.Class) != nil
+	return a.auth != nil && a.auth.Class.Auth.Password != ""
+}
+
+// resetClass is the app's own class of reset codes, "" for the built-in link.
+func (a *App) resetClass() string {
+	if c := a.man.PasswordReset.Class; c != "" && a.Reg.Model.Class(c) != nil {
+		return c
+	}
+	return ""
+}
+
+// resetPage marks a reset token (no page has a name starting with _).
+const resetPage = "_reset"
+
+// passwordMark is a number that changes when the account's password does: a
+// reset token carries it, so a token stops working once it has been used.
+func passwordMark(acct *runtime.Record, slot string) int64 {
+	sum := sha256.Sum256([]byte(acct.String(slot)))
+	return int64(binary.BigEndian.Uint64(sum[:8]) >> 1)
+}
+
+// mailer is the app's configured mail listener, nil when it has none (yet).
+func (a *App) mailer() *mail.Listener {
+	names := make([]string, 0, len(a.Reg.Listeners))
+	for name := range a.Reg.Listeners {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if ml, ok := listener.Unwrap(a.Reg.Listeners[name]).(*mail.Listener); ok && a.Reg.Unconfigured(name) == nil {
+			return ml
+		}
+	}
+	return nil
 }
 
 func (a *App) resetTTL() time.Duration {
@@ -52,6 +98,11 @@ func (a *App) forgot(rq *request) error {
 	au := a.auth.Class.Auth
 	label := strings.ToLower(a.auth.Class.Slot(au.Login).EffectiveLabel())
 	data := map[string]any{"LoginLabel": label, "Login": "", "Expires": humanDuration(a.resetTTL())}
+	if a.resetClass() == "" && a.mailer() == nil {
+		data["NoMail"] = true
+		a.site.Render(a.webRequest(rq), "forgot", "Reset your password", data)
+		return nil
+	}
 	if rq.r.Method == http.MethodPost {
 		if a.rateLimited(rq, "forgot", 5, time.Hour) {
 			return errStatus(http.StatusTooManyRequests, "Too many requests. Please wait a while.")
@@ -62,7 +113,7 @@ func (a *App) forgot(rq *request) error {
 			data["Message"] = "Tell us your " + label + "."
 		} else {
 			if acct := a.accountByLogin(rq.ctx(), login); acct != nil {
-				if err := a.startReset(rq.ctx(), acct, login); err != nil {
+				if err := a.startReset(rq, acct, login); err != nil {
 					a.log.Error("password reset", "login", login, "error", err)
 				}
 			}
@@ -85,7 +136,11 @@ func (a *App) accountByLogin(ctx context.Context, login string) *runtime.Record 
 // startReset saves a reset record for the account: a fresh code, good for
 // the configured time. Whatever the routing sends the class to (the mail
 // listener) follows.
-func (a *App) startReset(ctx context.Context, acct *runtime.Record, login string) error {
+func (a *App) startReset(rq *request, acct *runtime.Record, login string) error {
+	ctx := rq.ctx()
+	if a.resetClass() == "" {
+		return a.mailReset(rq, acct, login)
+	}
 	h := a.Reg.MustClass(a.man.PasswordReset.Class)
 	fk := a.resetFK()
 	if fk == "" {
@@ -104,9 +159,42 @@ func (a *App) startReset(ctx context.Context, acct *runtime.Record, login string
 	return h.Save(ctx, rec)
 }
 
+// mailReset mails the built-in reset link.
+func (a *App) mailReset(rq *request, acct *runtime.Record, login string) error {
+	ml := a.mailer()
+	if ml == nil {
+		return errors.New("the app has no mail listener set up")
+	}
+	tok := a.signer.Sign(ux.Claims{Page: resetPage, Class: a.auth.Class.Name, ID: acct.ID(),
+		Version: passwordMark(acct, a.auth.Class.Auth.Password), Exp: time.Now().Add(a.resetTTL()).Unix()})
+	link := a.publicBase(rq) + "/reset?code=" + url.QueryEscape(tok)
+	name := strings.Join(strings.Fields(a.man.Name), " ")
+	body := fmt.Sprintf(`Someone asked to reset the password of your %s account (%s).
+
+To choose a new password, open this link:
+
+%s
+
+It works once, for %s. If you did not ask for this, ignore this message: your password stays as it is.
+`, name, login, link, humanDuration(a.resetTTL()))
+	a.log.Info("password reset requested", "account", acct.ID())
+	return ml.SendMessage(rq.ctx(), login, "Reset your "+name+" password", body)
+}
+
 // resetByCode is the unused, unexpired reset record with this code, with
 // its account; nil when there is none.
 func (a *App) resetByCode(ctx context.Context, code string) (*runtime.Record, *runtime.Record) {
+	if a.resetClass() == "" {
+		c, ok := a.signer.Verify(code)
+		if !ok || c.Page != resetPage || c.Class != a.auth.Class.Name || c.ID == 0 {
+			return nil, nil
+		}
+		acct, err := a.auth.Load(ctx, c.ID)
+		if err != nil || acct == nil || passwordMark(acct, a.auth.Class.Auth.Password) != c.Version {
+			return nil, nil
+		}
+		return acct, acct
+	}
 	if len(code) < 16 || len(code) > 128 {
 		return nil, nil
 	}
@@ -162,9 +250,11 @@ func (a *App) reset(rq *request) error {
 				}
 				return err
 			}
-			rec.Values["used_at"] = time.Now().UTC().Format("2006-01-02 15:04:05")
-			if err := a.Reg.MustClass(rec.Class.Name).Save(rq.ctx(), rec); err != nil {
-				return err
+			if a.resetClass() != "" {
+				rec.Values["used_at"] = time.Now().UTC().Format("2006-01-02 15:04:05")
+				if err := a.Reg.MustClass(rec.Class.Name).Save(rq.ctx(), rec); err != nil {
+					return err
+				}
 			}
 			a.log.Info("password reset", "account", acct.ID())
 			if err := a.startSession(rq, acct.ID(), true); err != nil {

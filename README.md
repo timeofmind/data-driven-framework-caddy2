@@ -202,11 +202,16 @@ picture the image listener drew or an admin uploaded shows (without it the brows
 refuses any picture not on the app's own origin or in `image_hosts`).
 
 The handler answers its pages' paths, `/signup`, `/login`, `/logout`, `/me`, `/forgot`
-and `/reset` (when `password_reset` names the app's class of reset codes: it belongs to
-the auth class and has `code`, `expires_at` and `used_at`; the record the forgot page
-saves flows wherever the routing sends the class — a mail listener with a template
-holding `{{.base_url}}/reset?code={{.record.code}}` — and the answer never says whether
-the account exists), a
+and `/reset` (every app whose members sign in with a password, with nothing to declare:
+the forgot page mails a link through the app's mail listener — an `smtp` listener, which
+dd-app-builder sets up on its relay when it publishes the app — signed with the token key,
+good for `password_reset.expires` (an hour) and only until the password changes, so it
+works once; without a configured mail listener, as in a preview, the forgot page says the
+app can't send mail yet; the answer never says whether the account exists. An app may
+instead keep its own class of reset codes, `password_reset: {class: …}`: it belongs to
+the auth class and has `code`, `expires_at` and `used_at`, and flows wherever the routing
+sends it — a mail listener with a template holding
+`{{.base_url}}/reset?code={{.record.code}}`), a
 calendar's `/feed`, `/admin/services`, `/admin/media`, `/static/…`, `/_dd/…` (scripts,
 `/_dd/admin` for an admin link, `/_dd/media/…` for the Media page) and `/api/v1/…`;
 everything else falls through to the next handler. A page file may not claim
@@ -223,7 +228,7 @@ theme: theme                       # default "theme"
 mobile: mobile                     # default "mobile": templates for a phone (see Themes)
 timezone: America/Vancouver        # "today", and the default for imports
 signup: {enabled: true, intro: "Shown above the sign-up form"}
-password_reset: {class: PasswordReset, expires: 1h}   # /forgot emails a link, /reset?code=… sets the password
+password_reset: {expires: 1h}      # optional: how long the mailed reset link works (class: an app's own reset codes)
 image_hosts: [https://my-media.s3.us-east-1.amazonaws.com]   # origins pages may load pictures from besides the app's own (the CSP)
 nav: [calendar, walks, routes]     # page names in the main menu
 ```

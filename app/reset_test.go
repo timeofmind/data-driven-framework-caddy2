@@ -146,3 +146,90 @@ func copyDir(from, to string) error {
 		return os.WriteFile(dst, b, 0o644)
 	})
 }
+
+// The built-in reset: an app with a password sign-in and no reset class of its
+// own mails a signed link through its mail listener; the link works once (it
+// is bound to the password it replaces). Without a mail listener /forgot says
+// the app cannot send mail yet.
+func TestBuiltInPasswordReset(t *testing.T) {
+	if os.Getenv("DDF_TEST_MYSQL_DSN") != "" {
+		t.Skip("the routed fixture is SQLite")
+	}
+	setup := func(withMail bool) string {
+		dir := t.TempDir()
+		if err := copyDir(fixtureApp, dir); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(filepath.Join(dir, "app.yaml"))
+		os.WriteFile(filepath.Join(dir, "app.yaml"), []byte(strings.Replace(string(b), "password_reset: {class: PasswordReset, expires: 1h}\n", "", 1)), 0o644)
+		mailL := ""
+		if withMail {
+			mailL = "\n  mail: {type: smtp, host: 127.0.0.1, port: 1, starttls: off, from: club@example.org}"
+		}
+		os.MkdirAll(filepath.Join(dir, "routing"), 0o755)
+		os.WriteFile(filepath.Join(dir, "routing", "walkclub.yaml"), []byte(`
+listeners:
+  db:   {type: sqlite, dsn: `+filepath.Join(dir, "club.db")+`}`+mailL+`
+routes:
+  default: {source: db, flows_to: [db]}
+`), 0o644)
+		return dir
+	}
+
+	// No mail listener: the link is offered, and /forgot explains.
+	_, srv := newTestAppAt(t, setup(false))
+	b := newBrowser(t, srv)
+	if code, body, _ := b.get("/login"); code != 200 || !strings.Contains(body, "/forgot") {
+		t.Errorf("the sign-in page offers the link without mail: %d", code)
+	}
+	if code, body, _ := b.get("/forgot"); code != 200 || !strings.Contains(body, "can't send email until its mail is set up") {
+		t.Errorf("/forgot without mail: %d", code)
+	}
+
+	a, srv := newTestAppAt(t, setup(true))
+	ml := a.mailer()
+	if ml == nil {
+		t.Fatal("no mail listener")
+	}
+	type sent struct{ to, subject, body string }
+	mails := make(chan sent, 4)
+	ml.Send = func(ctx context.Context, to, subject, body string) error {
+		mails <- sent{to, subject, body}
+		return nil
+	}
+	ann := newBrowser(t, srv)
+	ann.signup("ann@example.com", "Ann")
+	ann.post("/logout", url.Values{"_csrf": {ann.csrf("/c/routes/new")}})
+	if code, body, _ := ann.post("/forgot", url.Values{"login": {"ann@example.com"}}); code != 200 || !strings.Contains(body, "is on its way") {
+		t.Fatalf("forgot: %d %s", code, extractAlert(body))
+	}
+	var m sent
+	select {
+	case m = <-mails:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no mail")
+	}
+	codes := regexp.MustCompile(`/reset\?code=(\S+)`).FindStringSubmatch(m.body)
+	if m.to != "ann@example.com" || !strings.Contains(m.subject, "Reset your Walk Club password") || codes == nil {
+		t.Fatalf("the mail: %+v", m)
+	}
+	code, _ := url.QueryUnescape(codes[1])
+	if c, body, _ := ann.get("/reset?code=" + url.QueryEscape(code)); c != 200 || !strings.Contains(body, "ann@example.com") {
+		t.Fatalf("the reset page: %d", c)
+	}
+	tok := ann.csrf("/reset?code=" + url.QueryEscape(code))
+	if c, _, loc := ann.post("/reset", url.Values{"_csrf": {tok}, "code": {code}, "password": {"a new password"}, "password_confirm": {"a new password"}}); c != 303 || loc == "" {
+		t.Fatalf("reset: %d %s", c, loc)
+	}
+	if c, body, _ := ann.get("/reset?code=" + url.QueryEscape(code)); c != 200 || !strings.Contains(body, "not valid any more") {
+		t.Errorf("the link used: %d", c)
+	}
+	ben := newBrowser(t, srv)
+	if c, _, loc := ben.post("/login", url.Values{"login": {"ann@example.com"}, "password": {"a new password"}}); c != 303 || loc == "" {
+		t.Errorf("the new password: %d %s", c, loc)
+	}
+	// A forged or altered link names nobody.
+	if c, body, _ := ben.get("/reset?code=" + url.QueryEscape(code+"x")); c != 200 || !strings.Contains(body, "not valid any more") {
+		t.Errorf("an altered link: %d", c)
+	}
+}
