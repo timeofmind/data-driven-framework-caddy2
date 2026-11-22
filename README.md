@@ -147,6 +147,11 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   as JSON, as one slot's value, or rendered through a template in the app's `s3/`
   directory (resolved and checked at start like the mail templates); where the object
   went is saved onto the record.
+- **DNS records at Cloudflare**: a class routed to a `cloudflare` listener (framework
+  `listener/cloudflare`) has each record kept as a DNS record in the zone named by `zone`;
+  the zone's API token (Zone · DNS · Edit) is given by an admin on Service Configuration,
+  and until then what flows to it is parked. The outcome (`status`, `record_id`) is
+  saved onto the record.
 - **Apps that read mail**: a class routed to an `imap` listener (framework
   `listener/imap`, `on: [update, delete]`) holds one record per message of an account.
   The handler starts the listener's loop, which looks at the mail server on the

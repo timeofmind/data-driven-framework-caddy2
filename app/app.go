@@ -29,6 +29,7 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/generator"
 	"github.com/timeofmind/data-driven-framework-go/listener"
 	"github.com/timeofmind/data-driven-framework-go/listener/appbuilder"
+	_ "github.com/timeofmind/data-driven-framework-go/listener/cloudflare"
 	"github.com/timeofmind/data-driven-framework-go/listener/hooks"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/image"
 	"github.com/timeofmind/data-driven-framework-go/listener/imap"
