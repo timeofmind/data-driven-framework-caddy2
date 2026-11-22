@@ -127,7 +127,7 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   has its answer made into a record of that class (its import block: fields, children and
   their children — a workout's sets and intervals), owned by the asking record's owner,
   the new id written onto the asking record with its answered status, in one write; all
-  or nothing.
+  or nothing. A refused write is retried with the kept answer, never by asking again.
 - **Language models**: a class routed to an `llm` listener (framework `listener/llm`)
   has each new record rendered through a template in the app's `llm/` directory (or a
   record of the listener's `template_class`) and asked of the configured providers in
