@@ -516,6 +516,11 @@ func (a *App) saveService(rq *request, name string) error {
 	for i := range providers {
 		settings = append(settings, providerSettings(info, providers[i].Type, providers[i].Name)...)
 	}
+	// What this save changed: a stored write reaches the database through the
+	// change log, so a read of it straight after may not see it yet; the
+	// reopen below takes these over what it reads (nil: forgotten).
+	changed := map[string]*string{}
+	keep := func(setting, v string) { changed[setting] = &v }
 	for _, s := range settings {
 		if _, inRouting := cfg.Settings[s.Name]; inRouting {
 			continue
@@ -526,16 +531,19 @@ func (a *App) saveService(rq *request, name string) error {
 			if err := a.forgetSetting(ctx, name, s.Name); err != nil {
 				return err
 			}
+			changed[s.Name] = nil
 		case s.Secret && v == "":
 			// blank keeps what is stored
 		case v == "":
 			if err := a.forgetSetting(ctx, name, s.Name); err != nil {
 				return err
 			}
+			changed[s.Name] = nil
 		default:
 			if err := a.storeSetting(ctx, rq.p.ID, name, s.Name, v, s.Secret); err != nil {
 				return err
 			}
+			keep(s.Name, v)
 		}
 	}
 	if derived {
@@ -566,19 +574,39 @@ func (a *App) saveService(rq *request, name string) error {
 			if err := a.forgetSetting(ctx, name, "providers"); err != nil {
 				return err
 			}
+			changed["providers"] = nil
 		} else if err := a.storeSetting(ctx, rq.p.ID, name, "providers", strings.Join(names, ", "), false); err != nil {
 			return err
+		} else {
+			keep("providers", strings.Join(names, ", "))
 		}
 	}
 	// The stored settings are the truth: the destination opens with them,
 	// or is left waiting with the reason, which the page shows.
 	values, _ := storedSettings(ctx, a.Reg, a.cfg.TokenKey, a.log)
-	if err := a.Reg.Reopen(ctx, name, values[name], a.readyListener); err != nil {
+	if err := a.Reg.Reopen(ctx, name, withChanges(values[name], changed), a.readyListener); err != nil {
 		a.log.Warn("a service does not open with its settings", "listener", name, "by", rq.p.ID, "error", err)
 		return nil
 	}
 	a.log.Info("a service was configured", "listener", name, "by", rq.p.ID)
 	return nil
+}
+
+// withChanges is the stored settings read back with a save's own changes
+// over them: what it stored, and nothing of what it forgot.
+func withChanges(stored map[string]string, changed map[string]*string) map[string]string {
+	out := map[string]string{}
+	for k, v := range stored {
+		out[k] = v
+	}
+	for k, v := range changed {
+		if v == nil {
+			delete(out, k)
+		} else {
+			out[k] = *v
+		}
+	}
+	return out
 }
 
 func (a *App) storeSetting(ctx context.Context, by int64, name, setting, value string, secret bool) error {

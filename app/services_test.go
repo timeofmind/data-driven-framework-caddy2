@@ -459,3 +459,42 @@ func TestServiceSettingsReachOtherNodes(t *testing.T) {
 		t.Fatal("the other node waits again once the key is forgotten")
 	}
 }
+
+// With a change log (as every published app runs), a stored setting reaches
+// the database a moment after the save: the save opens the destination with
+// what it stored, not with a read of the database that may not show it yet.
+func TestServiceSaveOpensWithLog(t *testing.T) {
+	if os.Getenv("DDF_TEST_MYSQL_DSN") != "" {
+		t.Skip("the routed fixture is SQLite")
+	}
+	dir := servicesFixture(t, true)
+	cfg := Config{AppDir: dir, Driver: "sqlite", DSN: filepath.Join(dir, "club.db"), Admins: []string{"admin@example.com"},
+		TokenKey: []byte("a-token-key-shared-by-the-nodes"), LogDir: filepath.Join(dir, "log"),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	a, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(a)
+	t.Cleanup(func() { srv.Close(); a.Close() })
+	b := newBrowser(t, srv)
+	b.signup("admin@example.com", "Admin")
+	for i, k := range []string{"sk-first", "sk-second"} {
+		if code, body, _ := b.post("/admin/services", url.Values{"listener": {"coach"}, "s_claude_api_key": {k}}); code != http.StatusSeeOther {
+			t.Fatalf("save %d: %d\n%s", i, code, extractAlert(body))
+		}
+		if err := a.Reg.Unconfigured("coach"); err != nil {
+			t.Fatalf("save %d: the destination opens with the key just saved: %v", i, err)
+		}
+		if got := a.Reg.Settings("coach")["claude_api_key"]; got != k {
+			t.Fatalf("save %d: opened with %q", i, got)
+		}
+	}
+	// Forgetting it closes it again at once.
+	if code, body, _ := b.post("/admin/services", url.Values{"listener": {"coach"}, "clear_claude_api_key": {"1"}}); code != http.StatusSeeOther {
+		t.Fatalf("forget: %d\n%s", code, extractAlert(body))
+	}
+	if a.Reg.Unconfigured("coach") == nil {
+		t.Fatal("forgotten: waits for a key again")
+	}
+}
