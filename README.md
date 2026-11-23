@@ -58,9 +58,22 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   for it while it waited is delivered. A destination without all its settings no longer
   keeps the app from starting: it waits, parking what flows to it. See the framework's
   `docs/service-configuration.md`.
+- **Bot Protection** (`/admin/bot-protection`, with `bot_defence`): an app behind an
+  edge whose bot defence (the hosting's hashcash, `wp_siteprotect`) challenges every
+  write — POST, PUT, PATCH, DELETE — from a visitor it hasn't verified, and asks for a
+  proof on each sign-up, sign-in and lost-password form. Every page the app draws asks
+  for the edge's solver script (`bot_defence`'s path), whatever the theme's layout, so
+  a visitor verifies in the background on the first page they open; the framework's
+  scripts solve and send a write again when the edge challenges it. The page lists
+  where the app takes writes (its own forms, each page with a form or action, the JSON
+  API, the media library), all protected; an admin of level 1 or an owner unticks a
+  path, or names another (`*` any one part), for a program that writes and can't solve.
+  The opt-outs are kept in the app's data (`FrameworkBotExempt`, `dd_bot_exempt`),
+  where the hosting reads them for the app's edge site. An app's own page at that path
+  keeps it; the server's is then at `/admin/_bot-protection`.
 - **The admin area** is the same in every app and styled by its theme: Service
   Configuration, **Media** (`/admin/media`) and **Admins** (`/admin/admins`) are the
-  server's three sections, and the app names its own in `admin.yaml` beside `app.yaml`
+  server's three sections (with **Sign-in** and **Bot Protection** when the app has them), and the app names its own in `admin.yaml` beside `app.yaml`
   (`sections: [{label, path, level}]`; without it, the app's pages under `/admin/`).
   **Admins** keeps the app's admins and their authority: the `admins` of the server's
   configuration are the owners (level 0, not changed in the app); others are added on
@@ -191,6 +204,9 @@ example.com {
 		database_file  mysql|sqlite <file holding the DSN>
 		admin          <login> [<login>...]           # e.g. emails with full access
 		secure_cookies on|off                         # default on
+		bot_defence    /siteprotect/hashcash.js       # behind an edge with the hosting's
+		                                              # hashcash: every page asks for its
+		                                              # solver; the Bot Protection page
 		session_ttl    720h
 		uploads        <dir> [25MB]                   # keep originals; per-file limit
 		token_key_file <file>                         # signs form tokens and admin links,

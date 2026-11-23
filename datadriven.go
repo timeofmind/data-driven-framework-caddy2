@@ -68,6 +68,11 @@ type Handler struct {
 	ChangeLog string `json:"change_log,omitempty"`
 	// BaseURL is the site's public URL, for links in mail.
 	BaseURL string `json:"base_url,omitempty"`
+	// BotDefence is the edge's bot-defence solver script (/siteprotect/hashcash.js)
+	// when the app is served behind an edge that challenges writes from visitors
+	// it has not verified: every page asks for it, and the admin area has the Bot
+	// Protection page. Empty: no such edge.
+	BotDefence string `json:"bot_defence,omitempty"`
 	// UML serves the app's UML diagrams at this path; UMLAdmins limits
 	// them to admins.
 	UML       string `json:"uml,omitempty"`
@@ -110,6 +115,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		NoTimers:       h.Timers == "off",
 		LogDir:         h.ChangeLog,
 		BaseURL:        h.BaseURL,
+		BotDefence:     h.BotDefence,
 		UMLPath:        h.UML,
 		UMLAdmins:      h.UMLAdmins,
 		Cluster:        h.Cluster,
@@ -291,6 +297,13 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		case "base_url":
 			if !d.AllArgs(&h.BaseURL) {
 				return d.ArgErr()
+			}
+		case "bot_defence":
+			if !d.AllArgs(&h.BotDefence) {
+				return d.ArgErr()
+			}
+			if !strings.HasPrefix(h.BotDefence, "/") {
+				return d.Errf("bot_defence: the solver script's path, starting with / (/siteprotect/hashcash.js)")
 			}
 		case "view":
 			if !d.NextArg() {

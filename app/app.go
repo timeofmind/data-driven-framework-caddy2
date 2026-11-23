@@ -79,6 +79,9 @@ type Config struct {
 	LogDir string
 	// BaseURL is the site's public URL, for links in mail.
 	BaseURL string
+	// BotDefence is the edge's bot-defence solver script (bot_defence): on
+	// every page, with the Bot Protection admin page (protection.go).
+	BotDefence string
 	// UMLPath serves the app's UML diagrams there ("" = not served);
 	// UMLAdmins limits them to admins.
 	UMLPath   string
@@ -121,7 +124,9 @@ type App struct {
 	// Admins page is, and the admins kept in the app's data as last read.
 	sections   []ux.Anchor
 	adminsPath string
-	adminMu    sync.Mutex
+	// protectPath is where the Bot Protection page is ("": no bot defence).
+	protectPath string
+	adminMu     sync.Mutex
 	// Sign-in providers (signin.go): where the page is, the providers as
 	// they are set up, their discovery documents; signinHTTP is a test's
 	// client in place of the guarded one.
@@ -445,13 +450,20 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 			signinAt = signinPathTaken // the app's own page there stays the app's
 		}
 	}
-	adminSections, err := loadAdminSections(cfg.AppDir, pages, adminsAt, signinAt)
+	protectAt := ""
+	if cfg.BotDefence != "" {
+		protectAt = protectPath
+		if p, _ := pages.Match(protectPath); p != nil {
+			protectAt = protectPathTaken // the app's own page there stays the app's
+		}
+	}
+	adminSections, err := loadAdminSections(cfg.AppDir, pages, adminsAt, signinAt, protectAt)
 	if err != nil {
 		cancel()
 		reg.Close()
 		return nil, err
 	}
-	a.sections, a.adminsPath, a.signinPath = adminSections, adminsAt, signinAt
+	a.sections, a.adminsPath, a.signinPath, a.protectPath = adminSections, adminsAt, signinAt, protectAt
 	for _, n := range reg.ClassNames() {
 		if frameworkClass(n) {
 			continue
@@ -484,6 +496,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		Engine: a.engine, Name: man.Name, Tagline: man.Tagline, Nav: man.Nav, ThemeDir: man.ThemeDir(), MobileDir: man.MobileDir(),
 		Signup: a.auth != nil && man.signupEnabled(), Reset: a.resetEnabled(), Log: cfg.Logger,
 		Upload: a.uploadView, UploadInfo: a.uploadInfo, AdminSections: adminSections, AdminNotices: a.adminNotices,
+		SolverScript: cfg.BotDefence,
 		SignedOut: func(rq *webux.Request) {
 			if rq.Viewer != nil {
 				a.endAllSessions(rq.R.Context(), rq.Viewer.ID)
@@ -656,6 +669,8 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		a.wrap(rq, a.services)
 	case path == mediaPath:
 		a.wrap(rq, a.mediaAdmin)
+	case a.protectPath != "" && path == a.protectPath:
+		a.wrap(rq, a.protectionAdmin)
 	case path == a.adminsPath:
 		a.wrap(rq, a.adminsAdmin)
 	case path == a.signinPath && a.auth != nil:
