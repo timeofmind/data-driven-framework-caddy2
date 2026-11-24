@@ -79,6 +79,23 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   once the token works, each once (`FrameworkDnsAdded`, `dd_dns_added`), so one an admin
   deleted is offered, not added back. An app's own page at that path keeps it; the
   server's is then at `/admin/_dns`.
+- **Payment Checkout** (`/admin/checkout`, with a `payment` listener in the routing; the
+  framework's `docs/commerce.md`): the payment listener's processors (moved off Service
+  Configuration, which links here), each checked with its processor on every visit
+  (`payment.Verify`: the keys work; Square's location and Stripe's account give their
+  country and currency), the store's country, currency (the payment listener's
+  `currency`) and the countries it sells to, shipping (none by default; the countries
+  shipped to and the shipping listeners' cards), and the methods' words. The store's
+  settings are kept under `_checkout` in `FrameworkServiceSetting`; pages read them as
+  `shop.ships`, `shop.currency`, `shop.country`. An app's own page at that path keeps it;
+  the server's is then at `/admin/_checkout`.
+- **The payment step** (`pay.go`): a form creating a record routed to a payment listener
+  offers the methods the store turned on (`ux.Engine.Pay`); saved, it goes to the payment
+  page `/_dd/pay/<resource>/<id>`, which follows the payment with `pay.js` and sends the
+  payer to the processor. The processors return to `/_dd/pay/<resource>/<id>/return`
+  (`payment.Listener.SetReturnVia`), where the payment is marked approved with the
+  processor's token as the signed-in payer, and `/cancel`; where the payer then goes is a
+  path of the app only.
 - **The admin area** is the same in every app and styled by its theme: Service
   Configuration, **Media** (`/admin/media`) and **Admins** (`/admin/admins`) are the
   server's three sections (with **Sign-in**, **Bot Protection** and **DNS** when the app has them), and the app names its own in `admin.yaml` beside `app.yaml`
@@ -250,7 +267,7 @@ instead keep its own class of reset codes, `password_reset: {class: …}`: it be
 the auth class and has `code`, `expires_at` and `used_at`, and flows wherever the routing
 sends it — a mail listener with a template holding
 `{{.base_url}}/reset?code={{.record.code}}`), a
-calendar's `/feed`, `/admin/services`, `/admin/media`, `/static/…`, `/_dd/…` (scripts,
+calendar's `/feed`, `/admin/services`, `/admin/checkout`, `/admin/media`, `/static/…`, `/_dd/…` (scripts, `/_dd/pay/…`,
 `/_dd/admin` for an admin link, `/_dd/media/…` for the Media page) and `/api/v1/…`;
 everything else falls through to the next handler. A page file may not claim
 `/admin/services` or `/admin/media`.

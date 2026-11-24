@@ -129,7 +129,7 @@ func TestMediaPage(t *testing.T) {
 	srv := httptest.NewServer(a)
 	defer srv.Close()
 	defer a.Close()
-	if got := sortedAnchors(a.site.AdminSections()); strings.Join(got, "|") != "Admins /admin/admins|Media /admin/media|Services /admin/services|Walks /c/walks" {
+	if got := sortedAnchors(a.site.AdminSections()); strings.Join(got, "|") != "Admins /admin/admins|Media /admin/media|Payment Checkout /admin/checkout|Services /admin/services|Walks /c/walks" {
 		t.Fatalf("sections %v", got)
 	}
 
@@ -223,7 +223,7 @@ func TestMediaUnavailable(t *testing.T) {
 	os.RemoveAll(filepath.Join(dir, "theme"))
 	os.WriteFile(filepath.Join(dir, "pages", "admin-attendances.yaml"), []byte("path: /admin/attendances\ntitle: Attendances admin\naccess: admin\ninterface_views:\n  - {type: list, name: list, data: {class: Attendance}, fields: [note]}\n"), 0o644)
 	a, srv := newServicesApp(t, dir, nil)
-	if got := sortedAnchors(a.site.AdminSections()); strings.Join(got, "|") != "Admins /admin/admins|Attendances admin /admin/attendances|Media /admin/media|Services /admin/services" {
+	if got := sortedAnchors(a.site.AdminSections()); strings.Join(got, "|") != "Admins /admin/admins|Attendances admin /admin/attendances|Media /admin/media|Payment Checkout /admin/checkout|Services /admin/services" {
 		t.Fatalf("sections %v", got)
 	}
 	b := newBrowser(t, srv)

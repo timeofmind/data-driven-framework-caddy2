@@ -56,9 +56,12 @@ type adminFile struct {
 // order, after the server's (Services, Media, Admins — the Admins page at
 // adminsAt). Without the file, the app's pages whose path is under /admin/
 // are its sections, in page order, each with its page's level.
-func loadAdminSections(dir string, pages *ux.Site, adminsAt, signinAt, protectAt, dnsAt string) ([]ux.Anchor, error) {
-	out := []ux.Anchor{{Label: "Services", URL: servicesPath, Level: servicesLevel}, {Label: "Media", URL: mediaPath},
-		{Label: "Admins", URL: adminsAt, Level: adminsLevel}}
+func loadAdminSections(dir string, pages *ux.Site, adminsAt, signinAt, protectAt, dnsAt, checkoutAt string) ([]ux.Anchor, error) {
+	out := []ux.Anchor{{Label: "Services", URL: servicesPath, Level: servicesLevel}}
+	if checkoutAt != "" { // the routing names a payment listener
+		out = append(out, ux.Anchor{Label: "Payment Checkout", URL: checkoutAt, Level: servicesLevel})
+	}
+	out = append(out, ux.Anchor{Label: "Media", URL: mediaPath}, ux.Anchor{Label: "Admins", URL: adminsAt, Level: adminsLevel})
 	if signinAt != "" { // the routing names a signin listener
 		out = append(out, ux.Anchor{Label: "Sign-in", URL: signinAt, Level: servicesLevel}) // keys, like Services
 	}
@@ -102,7 +105,7 @@ func loadAdminSections(dir string, pages *ux.Site, adminsAt, signinAt, protectAt
 				if !strings.HasPrefix(p.Path, "/admin/") || strings.Contains(p.Path, "{") || p.Shared {
 					continue
 				}
-				if pth := strings.TrimRight(p.Path, "/"); pth == adminsPath || pth == signinPath || pth == protectPath || pth == dnsPath {
+				if pth := strings.TrimRight(p.Path, "/"); pth == adminsPath || pth == signinPath || pth == protectPath || pth == dnsPath || pth == checkoutPath {
 					continue // the app's own page there is reached by its own links
 				}
 				out = append(out, ux.Anchor{Label: p.LabelText(), URL: strings.TrimRight(p.Path, "/"), Level: p.Level})

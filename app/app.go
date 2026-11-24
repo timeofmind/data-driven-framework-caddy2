@@ -130,8 +130,10 @@ type App struct {
 	// dnsPath is where the DNS page is ("": no zone kept by the server), and
 	// dns what this node knows of the zones.
 	dnsPath string
-	dns     *dnsState
-	adminMu sync.Mutex
+	// checkoutPath is where Payment Checkout is ("": the app takes no payments).
+	checkoutPath string
+	dns          *dnsState
+	adminMu      sync.Mutex
 	// Sign-in providers (signin.go): where the page is, the providers as
 	// they are set up, their discovery documents; signinHTTP is a test's
 	// client in place of the guarded one.
@@ -154,6 +156,9 @@ type App struct {
 	// settingsMu: one pass at a time of opening destinations again with the
 	// stored settings (syncSettings).
 	settingsMu sync.Mutex
+	// checkout: the Payment Checkout page's own settings (pay.go), as last read.
+	checkoutMu   sync.Mutex
+	checkoutVals map[string]string
 }
 
 // New loads the model and pages, connects, brings the database up to date
@@ -472,13 +477,24 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		}
 		a.dns = &dnsState{errs: map[string]error{}, kick: make(chan struct{}, 1)}
 	}
-	adminSections, err := loadAdminSections(cfg.AppDir, pages, adminsAt, signinAt, protectAt, dnsAt)
+	// Payment Checkout is there when the routing names a payment listener.
+	checkoutAt := ""
+	for _, l := range reg.Routing.Listeners {
+		if l.Type == "payment" {
+			checkoutAt = checkoutPath
+			if p, _ := pages.Match(checkoutPath); p != nil {
+				checkoutAt = checkoutPathTaken // the app's own page there stays the app's
+			}
+		}
+	}
+	adminSections, err := loadAdminSections(cfg.AppDir, pages, adminsAt, signinAt, protectAt, dnsAt, checkoutAt)
 	if err != nil {
 		cancel()
 		reg.Close()
 		return nil, err
 	}
 	a.sections, a.adminsPath, a.signinPath, a.protectPath, a.dnsPath = adminSections, adminsAt, signinAt, protectAt, dnsAt
+	a.checkoutPath = checkoutAt
 	for _, n := range reg.ClassNames() {
 		if frameworkClass(n) {
 			continue
@@ -507,6 +523,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return fail(err)
 	}
 	a.engine.Signer = a.signer
+	a.engine.Pay, a.engine.PayPath, a.engine.Shop = a.payOffer, payPath, a.shopValues
 	a.site, err = webux.New(webux.Options{
 		Engine: a.engine, Name: man.Name, Tagline: man.Tagline, Nav: man.Nav, ThemeDir: man.ThemeDir(), MobileDir: man.MobileDir(),
 		Signup: a.auth != nil && man.signupEnabled(), Reset: a.resetEnabled(), Log: cfg.Logger,
@@ -559,8 +576,13 @@ func (a *App) readyListener(l listener.Listener) error {
 			}
 		}
 	}
-	if pl, ok := l.(*payment.Listener); ok && pl.BaseURL() == "" {
-		pl.SetBaseURL(cfg.BaseURL) // a return_url that is a path of the app
+	if pl, ok := l.(*payment.Listener); ok {
+		if pl.BaseURL() == "" {
+			pl.SetBaseURL(cfg.BaseURL) // a return_url that is a path of the app
+		}
+		if cfg.BaseURL != "" {
+			pl.SetReturnVia(a.payReturnVia) // the payer comes back through /_dd/pay (pay.go)
+		}
 	}
 	if ml, ok := l.(*mail.Listener); ok {
 		if ml.BaseURL() == "" {
@@ -692,8 +714,12 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		if !a.site.ServeScript(a.webRequest(rq), parts[1]) {
 			http.NotFound(w, r)
 		}
+	case strings.HasPrefix(path, payPath+"/"):
+		a.wrap(rq, func(rq *request) error { return a.pay(rq, strings.TrimPrefix(path, payPath)) })
 	case path == servicesPath:
 		a.wrap(rq, a.services)
+	case a.checkoutPath != "" && path == a.checkoutPath:
+		a.wrap(rq, a.checkout)
 	case path == mediaPath:
 		a.wrap(rq, a.mediaAdmin)
 	case a.protectPath != "" && path == a.protectPath:

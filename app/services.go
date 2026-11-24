@@ -52,6 +52,7 @@ type serviceView struct {
 type providerView struct {
 	Name, Type, Summary string
 	Currencies          string // a payment processor's currencies, for the card
+	Countries           string // the countries its accounts may be in (Payment Checkout)
 	Unknown             bool   // a kind the listener type does not offer
 	Use                 bool
 	Rank                int
@@ -80,9 +81,11 @@ func currenciesText(p *listener.Provider) string {
 }
 
 type servicesPage struct {
-	Message, Error string
-	NoKey          bool
-	Services       []serviceView
+	Message, Error   string
+	NoKey            bool
+	Services         []serviceView
+	Checkout         string // Payment Checkout, where the payment (and shipping) services are
+	CheckoutShipping bool
 }
 
 func (a *App) settingsClass() *runtime.Handle { return a.Reg.MustClass("FrameworkServiceSetting") }
@@ -262,6 +265,7 @@ func (a *App) syncSettings(ctx context.Context) {
 	a.settingsMu.Lock()
 	defer a.settingsMu.Unlock()
 	values, _ := storedSettings(ctx, a.Reg, a.cfg.TokenKey, slog.New(slog.DiscardHandler))
+	a.setCheckoutValues(values[checkoutSettings])
 	for name, cfg := range a.Reg.Routing.Listeners {
 		if _, ok := a.Reg.Listeners[name].(*listener.Switch); !ok {
 			continue
@@ -334,7 +338,20 @@ func (a *App) services(rq *request) error {
 			pg.Message = fmt.Sprintf("Saved %s: configured and running.", saved)
 		}
 	}
-	pg.Services = a.serviceViews(rq.ctx())
+	pay, ship := a.commerceListeners()
+	held := map[string]bool{}
+	for _, n := range append(append([]string(nil), pay...), ship...) {
+		held[n] = true
+	}
+	for _, sv := range a.serviceViews(rq.ctx()) {
+		if len(pay) > 0 && held[sv.Name] {
+			continue // on Payment Checkout
+		}
+		pg.Services = append(pg.Services, sv)
+	}
+	if len(pay) > 0 {
+		pg.Checkout, pg.CheckoutShipping = a.url(a.checkoutPath), len(ship) > 0
+	}
 	a.site.Render(a.webRequest(rq), "services", "Service Configuration", pg)
 	return nil
 }
@@ -522,7 +539,12 @@ func optionalUnlessUsed(fields []ux.FormField, provider string) {
 
 // saveService stores a listener's posted settings and opens it again with
 // them. An error that is not an httpError is shown on the page.
-func (a *App) saveService(rq *request, name string) error {
+func (a *App) saveService(rq *request, name string) error { return a.saveServiceExcept(rq, name, nil) }
+
+// saveServiceExcept saves a service's card, leaving the settings in except
+// as they are (another part of the page holds them: Payment Checkout's
+// store keeps the payment listener's currency).
+func (a *App) saveServiceExcept(rq *request, name string, except map[string]bool) error {
 	infos := infosByType()
 	cfg, ok := a.Reg.Routing.Listeners[name]
 	if !ok {
@@ -551,7 +573,7 @@ func (a *App) saveService(rq *request, name string) error {
 	changed := map[string]*string{}
 	keep := func(setting, v string) { changed[setting] = &v }
 	for _, s := range settings {
-		if _, inRouting := cfg.Settings[s.Name]; inRouting {
+		if _, inRouting := cfg.Settings[s.Name]; inRouting || except[s.Name] {
 			continue
 		}
 		v := strings.TrimSpace(f.Get("s_" + s.Name))

@@ -297,7 +297,11 @@ func TestServiceConfigurationProviders(t *testing.T) {
 	}
 	b := newBrowser(t, srv)
 	b.signup("admin@example.com", "Admin")
-	code, body, _ := b.get("/admin/services")
+	// The payment listener is on Payment Checkout; Service Configuration links there.
+	if _, sb, _ := b.get("/admin/services"); strings.Contains(sb, `id="svc-pay"`) || !strings.Contains(sb, `href="/admin/checkout"`) {
+		t.Errorf("Service Configuration leaves the processors to Payment Checkout:\n%s", sb)
+	}
+	code, body, _ := b.get("/admin/checkout")
 	if code != http.StatusOK {
 		t.Fatalf("admin page: %d\n%s", code, body)
 	}
@@ -321,7 +325,7 @@ func TestServiceConfigurationProviders(t *testing.T) {
 		t.Error("square's location is required only for using square, not by the browser")
 	}
 	// Stripe and PayPal in use, PayPal first; live.
-	code, body, _ = b.post("/admin/services", url.Values{"listener": {"pay"}, "s_mode": {"live"},
+	code, body, _ = b.post("/admin/checkout", url.Values{"op": {"service"}, "listener": {"pay"}, "s_mode": {"live"},
 		"use_stripe": {"1"}, "rank_stripe": {"2"}, "s_stripe_secret_key": {"sk_test_abc"},
 		"use_paypal": {"1"}, "rank_paypal": {"1"}, "s_paypal_client_id": {"cid"}, "s_paypal_secret": {"shh"}, "s_paypal_environment": {"sandbox"}})
 	if code != http.StatusSeeOther {
@@ -333,7 +337,7 @@ func TestServiceConfigurationProviders(t *testing.T) {
 	if s := a.Reg.Settings("pay"); s["providers"] != "paypal, stripe" || s["mode"] != "live" || s["stripe_secret_key"] != "sk_test_abc" || s["paypal_secret"] != "shh" {
 		t.Fatalf("settings: %v", s)
 	}
-	code, body, _ = b.get("/admin/services")
+	code, body, _ = b.get("/admin/checkout")
 	if !strings.Contains(body, `<div class="provider-settings" data-dd-show-if="use_paypal=1">`) || !strings.Contains(body, `data-dd-show-if="use_mollie=1" hidden`) {
 		t.Error("a provider in use shows its settings, the others not")
 	}
@@ -344,10 +348,15 @@ func TestServiceConfigurationProviders(t *testing.T) {
 		t.Fatalf("the cards after the save:\n%s", body)
 	}
 	if strings.Contains(body, "sk_test_abc") || strings.Contains(body, "shh") || !strings.Contains(body, `name="clear_stripe_secret_key"`) {
+		for _, w := range []string{"sk_test_abc", "shh"} {
+			if i := strings.Index(body, w); i >= 0 {
+				t.Logf("%s at: %s", w, body[max(0, i-200):min(len(body), i+100)])
+			}
+		}
 		t.Fatal("a provider's secret is never shown again")
 	}
 	// Square ticked without its token: the listener waits, and says why.
-	code, body, _ = b.post("/admin/services", url.Values{"listener": {"pay"}, "s_mode": {"live"}, "use_stripe": {"1"}, "use_square": {"1"}, "s_square_location_id": {"L1"}})
+	code, body, _ = b.post("/admin/checkout", url.Values{"op": {"service"}, "listener": {"pay"}, "s_mode": {"live"}, "use_stripe": {"1"}, "use_square": {"1"}, "s_square_location_id": {"L1"}})
 	if code != http.StatusSeeOther {
 		t.Fatalf("save square: %d\n%s", code, extractAlert(body))
 	}
@@ -360,7 +369,7 @@ func TestServiceConfigurationProviders(t *testing.T) {
 	// Amazon Pay ticked with its key: open, and the pages admit its script.
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
-	code, body, _ = b.post("/admin/services", url.Values{"listener": {"pay"}, "s_mode": {"live"}, "use_amazonpay": {"1"},
+	code, body, _ = b.post("/admin/checkout", url.Values{"op": {"service"}, "listener": {"pay"}, "s_mode": {"live"}, "use_amazonpay": {"1"},
 		"s_amazonpay_merchant_id": {"A1M"}, "s_amazonpay_store_id": {"amzn1.application-oa2-client.x"}, "s_amazonpay_public_key_id": {"SANDBOX-K"}, "s_amazonpay_private_key": {pemKey}})
 	if code != http.StatusSeeOther {
 		t.Fatalf("save amazonpay: %d\n%s", code, extractAlert(body))
@@ -372,7 +381,7 @@ func TestServiceConfigurationProviders(t *testing.T) {
 		t.Fatalf("the CSP admits Amazon Pay: %s", h.Get("Content-Security-Policy"))
 	}
 	// Nothing ticked, back to test mode: runs again with no provider.
-	if code, body, _ := b.post("/admin/services", url.Values{"listener": {"pay"}, "s_mode": {"test"}}); code != http.StatusSeeOther {
+	if code, body, _ := b.post("/admin/checkout", url.Values{"op": {"service"}, "listener": {"pay"}, "s_mode": {"test"}}); code != http.StatusSeeOther {
 		t.Fatalf("save test: %d\n%s", code, extractAlert(body))
 	}
 	if err := a.Reg.Unconfigured("pay"); err != nil {
