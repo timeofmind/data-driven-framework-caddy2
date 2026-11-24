@@ -126,7 +126,10 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   allowed even when sign-up is off — and on to Service Configuration. Good for ten
   minutes by default, on any node, not single-use.
 - **A JSON API** at `/api/v1/<resource>` for every class, with a generated OpenAPI 3
-  document; `read: owner` fields only reach their owner.
+  document; `read: owner` fields only reach their owner. A record's computed values answer
+  with its slots (get, list, create, update; framework v0.50.40) — each whose `when` holds
+  and whose value is not null, and only to a viewer who may see every slot of the record's
+  own it reads; a list loads the counts they read in one grouped query.
 - **View indexes and kept values** (framework `docs/searches-at-scale.md`) are settled
   on start: on SQLite before serving, otherwise in the background, lists reading
   through their join classes until then. A node that can't settle — in a rolling
@@ -143,6 +146,12 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   or nothing. A refused write is retried with the kept answer, never by asking again.
 - **Lists of a relationship**: a page's list `of:` a has_many shows what the relationship's
   `count` counts — its foreign key or `match`, and its `where` (framework v0.50.30).
+- **Lookups at a web API**: a class routed to an `http` listener (framework
+  `listener/http`) has each new record — and each update that changes a slot its URL reads —
+  looked up with GET at the listener's one https URL, the JSON answer mapped onto the
+  record (`map_<slot>`, `found`, outcome under `record_prefix`) through the normal save
+  path; never an address inside the server's network. The listener's URL placeholders and
+  mapped slots are checked against the routed classes when the app starts.
 - **Language models**: a class routed to an `llm` listener (framework `listener/llm`)
   has each new record rendered through a template in the app's `llm/` directory (or a
   record of the listener's `template_class`) and asked of the configured providers in

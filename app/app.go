@@ -31,6 +31,7 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/listener/appbuilder"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/cloudflare"
 	"github.com/timeofmind/data-driven-framework-go/listener/hooks"
+	_ "github.com/timeofmind/data-driven-framework-go/listener/http"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/image"
 	"github.com/timeofmind/data-driven-framework-go/listener/imap"
 	"github.com/timeofmind/data-driven-framework-go/listener/llm"
@@ -521,6 +522,12 @@ func (a *App) readyListener(l listener.Listener) error {
 	cfg, reg := a.cfg, a.Reg
 	if h, ok := l.(hooks.Hooked); ok {
 		h.SetHooks(a.hooks)
+	}
+	// A lookup (http) checks its URL's placeholders and mapped slots against the classes routed to it.
+	if c, ok := l.(interface{ CheckRoutes() error }); ok {
+		if err := c.CheckRoutes(); err != nil {
+			return err
+		}
 	}
 	if t, ok := l.(hooks.Templated); ok {
 		if d := t.Dir(); d != "" && !filepath.IsAbs(d) {

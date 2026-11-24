@@ -159,7 +159,7 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 			if rec.Version != 0 {
 				rq.w.Header().Set("ETag", fmt.Sprintf("\"%d\"", rec.Version))
 			}
-			return writeJSON(rq, http.StatusOK, apiRecord(rq, rec))
+			return writeJSON(rq, http.StatusOK, a.apiRecord(rq, rec, false))
 		case http.MethodPut, http.MethodPatch:
 			if ok, _ := a.Reg.Writable(rq.ctx(), rec, rq.p); !ok {
 				return errForbidden
@@ -286,9 +286,12 @@ func (a *App) apiList(rq *request) error {
 	if err != nil {
 		return err
 	}
+	if len(rq.handle.Class.Computed) > 0 {
+		a.Reg.LoadLinksAll(rq.ctx(), recs) // the counts the computed values read, grouped for the page
+	}
 	data := make([]map[string]any, len(recs))
 	for i, r := range recs {
-		data[i] = apiRecord(rq, r)
+		data[i] = a.apiRecord(rq, r, true)
 	}
 	return writeJSON(rq, http.StatusOK, map[string]any{"data": data, "total": total, "page": pageNo, "per_page": per})
 }
@@ -359,7 +362,7 @@ func (a *App) apiSave(rq *request, rec *runtime.Record, status int) error {
 		}
 		return err
 	}
-	return writeJSON(rq, status, apiRecord(rq, rec))
+	return writeJSON(rq, status, a.apiRecord(rq, rec, false))
 }
 
 // stats is what the server knows about itself: the data view layer's
@@ -407,8 +410,22 @@ func (a *App) apiError(rq *request, err error) {
 
 // apiRecord is a record as the API gives it: the slots the viewer may see,
 // and _version, the record's version, for a client to hand back as _seen.
-func apiRecord(rq *request, rec *runtime.Record) map[string]any {
+// apiRecord is a record as the API answers it: the slots the viewer may see,
+// and the class's computed values (those the viewer may see: none read a slot
+// kept from them), worked out as a page would show them. loaded: the
+// record's links and counts are loaded already (a list loads them at once).
+func (a *App) apiRecord(rq *request, rec *runtime.Record, loaded bool) map[string]any {
 	out := rec.PublicFor(rq.p)
+	if len(rec.Class.Computed) > 0 {
+		if !loaded {
+			a.Reg.LoadLinks(rq.ctx(), rec)
+		}
+		for k, v := range runtime.ComputedFor(rec, rq.p) {
+			if _, slot := out[k]; !slot {
+				out[k] = v
+			}
+		}
+	}
 	if rec.Version != 0 {
 		out["_version"] = rec.Version
 	}

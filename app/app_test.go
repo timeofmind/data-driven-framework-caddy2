@@ -443,6 +443,9 @@ func TestAPI(t *testing.T) {
 	if code != 201 || out["duration"] != float64(3000) || out["source_hash"] != nil {
 		t.Fatalf("create: %d %v", code, out)
 	}
+	if out["pace"] != float64(600) { // a computed value answers too
+		t.Errorf("computed pace: %v", out["pace"])
+	}
 	id := itoa(int64(out["id"].(float64)))
 	if code, out := do("PATCH", "/api/v1/walks/"+id, `{"distance_km":-3}`, me.CSRF); code != 422 || out["fields"] == nil {
 		t.Errorf("validation: %d %v", code, out)
