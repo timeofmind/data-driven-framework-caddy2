@@ -400,6 +400,16 @@ func (a *App) serviceViews(ctx context.Context) []serviceView {
 				optionalUnlessUsed(providers[i].Fields, providers[i].Name)
 			}
 		}
+		if derived {
+			// The ones in use first, in their order; then the rest as the
+			// directory lists them — a long list reads from what matters.
+			sort.SliceStable(providers, func(i, j int) bool {
+				if providers[i].Use != providers[j].Use {
+					return providers[i].Use
+				}
+				return providers[i].Use && providers[i].Rank < providers[j].Rank
+			})
+		}
 		sv.Providers = providers
 		out = append(out, sv)
 	}
@@ -494,10 +504,10 @@ func fieldsFor(settings []listener.Setting, inRouting map[string]string, values 
 	return main, advanced, open
 }
 
-// optionalUnlessUsed: a card the admin may leave unticked asks for nothing
-// in the browser — its mandatory settings are mandatory only for using it,
-// and a form must save with a provider left empty (a browser would refuse
-// the whole form for a field on a card not in use, folded out of sight).
+// optionalUnlessUsed: a provider the admin may leave unticked asks for
+// nothing in the browser — its mandatory settings are mandatory only for
+// using it, and a form must save with a provider left empty (a browser would
+// refuse the whole form for a field of a provider not in use, hidden).
 // The listener says what a ticked provider lacks when it opens.
 func optionalUnlessUsed(fields []ux.FormField, provider string) {
 	for i := range fields {

@@ -311,10 +311,11 @@ func TestServiceConfigurationProviders(t *testing.T) {
 	if strings.Contains(body, `name="s_providers"`) || strings.Contains(body, `name="s_brand_name"`) {
 		t.Error("providers is derived from the cards; brand_name is the routing's")
 	}
-	// A card not in use is folded to its name, and asks the browser for
-	// nothing: PayPal alone saves with Square's location left empty.
-	if !strings.Contains(body, `<details class="provider" id="svc-pay-square">`) {
-		t.Error("an unused card starts folded")
+	// A provider not in use is one line, its tick box: its settings show
+	// once ticked, and ask the browser for nothing — PayPal alone saves with
+	// Square's location left empty.
+	if !strings.Contains(body, `<div class="provider-settings" data-dd-show-if="use_square=1" hidden>`) {
+		t.Error("an unticked provider's settings are hidden until it is ticked")
 	}
 	if strings.Contains(body, `name="s_square_location_id" value="" required`) || !strings.Contains(body, "Required to use square.") {
 		t.Error("square's location is required only for using square, not by the browser")
@@ -333,8 +334,11 @@ func TestServiceConfigurationProviders(t *testing.T) {
 		t.Fatalf("settings: %v", s)
 	}
 	code, body, _ = b.get("/admin/services")
-	if !strings.Contains(body, `<details class="provider" id="svc-pay-paypal" open>`) || strings.Contains(body, `id="svc-pay-mollie" open`) {
-		t.Error("the cards in use start open, the others folded")
+	if !strings.Contains(body, `<div class="provider-settings" data-dd-show-if="use_paypal=1">`) || !strings.Contains(body, `data-dd-show-if="use_mollie=1" hidden`) {
+		t.Error("a provider in use shows its settings, the others not")
+	}
+	if p, st, m := strings.Index(body, `id="svc-pay-paypal"`), strings.Index(body, `id="svc-pay-stripe"`), strings.Index(body, `id="svc-pay-mollie"`); !(p < st && st < m) {
+		t.Error("the providers in use come first, in their order")
 	}
 	if code != http.StatusOK || !strings.Contains(body, `name="use_paypal" value="1" checked`) || !strings.Contains(body, `name="rank_paypal" min="1" step="1" value="1"`) || !strings.Contains(body, `name="rank_stripe" min="1" step="1" value="2"`) || strings.Contains(body, `name="use_mollie" value="1" checked`) {
 		t.Fatalf("the cards after the save:\n%s", body)
