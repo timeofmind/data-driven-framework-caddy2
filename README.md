@@ -85,7 +85,8 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   (`payment.Verify`: the keys work; Square's location and Stripe's account give their
   country and currency), the store's country, currency (the payment listener's
   `currency`) and the countries it sells to, shipping (none by default; the countries
-  shipped to and the shipping listeners' cards), and the methods' words. The store's
+  shipped to and the shipping listeners' cards), the methods' words, and the offline ways to pay (Interac e-Transfer, in person, bank
+  transfer, cheque) with the store's instructions. The store's
   settings are kept under `_checkout` in `FrameworkServiceSetting`; pages read them as
   `shop.ships`, `shop.currency`, `shop.country`. An app's own page at that path keeps it;
   the server's is then at `/admin/_checkout`.
