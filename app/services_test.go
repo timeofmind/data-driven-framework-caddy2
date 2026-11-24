@@ -311,6 +311,14 @@ func TestServiceConfigurationProviders(t *testing.T) {
 	if strings.Contains(body, `name="s_providers"`) || strings.Contains(body, `name="s_brand_name"`) {
 		t.Error("providers is derived from the cards; brand_name is the routing's")
 	}
+	// A card not in use is folded to its name, and asks the browser for
+	// nothing: PayPal alone saves with Square's location left empty.
+	if !strings.Contains(body, `<details class="provider" id="svc-pay-square">`) {
+		t.Error("an unused card starts folded")
+	}
+	if strings.Contains(body, `name="s_square_location_id" value="" required`) || !strings.Contains(body, "Required to use square.") {
+		t.Error("square's location is required only for using square, not by the browser")
+	}
 	// Stripe and PayPal in use, PayPal first; live.
 	code, body, _ = b.post("/admin/services", url.Values{"listener": {"pay"}, "s_mode": {"live"},
 		"use_stripe": {"1"}, "rank_stripe": {"2"}, "s_stripe_secret_key": {"sk_test_abc"},
@@ -325,6 +333,9 @@ func TestServiceConfigurationProviders(t *testing.T) {
 		t.Fatalf("settings: %v", s)
 	}
 	code, body, _ = b.get("/admin/services")
+	if !strings.Contains(body, `<details class="provider" id="svc-pay-paypal" open>`) || strings.Contains(body, `id="svc-pay-mollie" open`) {
+		t.Error("the cards in use start open, the others folded")
+	}
 	if code != http.StatusOK || !strings.Contains(body, `name="use_paypal" value="1" checked`) || !strings.Contains(body, `name="rank_paypal" min="1" step="1" value="1"`) || !strings.Contains(body, `name="rank_stripe" min="1" step="1" value="2"`) || strings.Contains(body, `name="use_mollie" value="1" checked`) {
 		t.Fatalf("the cards after the save:\n%s", body)
 	}

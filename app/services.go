@@ -396,6 +396,9 @@ func (a *App) serviceViews(ctx context.Context) []serviceView {
 		sv.Fields, sv.Advanced, sv.AdvancedOpen = fieldsFor(own, cfg.Settings, values[name], secrets[name])
 		for i := range providers {
 			providers[i].Fields, providers[i].Advanced, providers[i].AdvancedOpen = fieldsFor(providerSettings(info, providers[i].Type, providers[i].Name), cfg.Settings, values[name], secrets[name])
+			if derived {
+				optionalUnlessUsed(providers[i].Fields, providers[i].Name)
+			}
 		}
 		sv.Providers = providers
 		out = append(out, sv)
@@ -489,6 +492,22 @@ func fieldsFor(settings []listener.Setting, inRouting map[string]string, values 
 		}
 	}
 	return main, advanced, open
+}
+
+// optionalUnlessUsed: a card the admin may leave unticked asks for nothing
+// in the browser — its mandatory settings are mandatory only for using it,
+// and a form must save with a provider left empty (a browser would refuse
+// the whole form for a field on a card not in use, folded out of sight).
+// The listener says what a ticked provider lacks when it opens.
+func optionalUnlessUsed(fields []ux.FormField, provider string) {
+	for i := range fields {
+		f := &fields[i]
+		if f.Type == "checkbox" {
+			continue
+		}
+		f.Help = "Required to use " + provider + ". " + strings.TrimPrefix(f.Help, "Required. ")
+		f.Required = false
+	}
 }
 
 // saveService stores a listener's posted settings and opens it again with
