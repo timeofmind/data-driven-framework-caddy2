@@ -90,6 +90,29 @@ type methodView struct {
 	Default                                            bool
 }
 
+// offlineView is one offline way to pay on the page: on or off, and the
+// store's instructions for it.
+type offlineView struct {
+	Name, Label, Note string
+	On                bool
+	Fields            []offlineField
+}
+
+type offlineField struct {
+	Name, Label, Value, Placeholder, Help string
+	Multiline                             bool
+}
+
+// offlineFields are each offline method's instructions (kept under
+// _checkout, read by pages as shop.<name>).
+var offlineFields = map[string][]offlineField{
+	"offline_etransfer": {{Name: "etransfer_to", Label: "Send e-Transfers to", Placeholder: "payments@yourclub.org", Help: "The email (or phone) your bank account takes Interac e-Transfers at — set up autodeposit so no security question is needed."},
+		{Name: "etransfer_note", Label: "Anything else to say", Placeholder: "e.g. The security answer is chess2026", Multiline: true}},
+	"offline_in_person": {{Name: "in_person_note", Label: "How and where", Placeholder: "e.g. Cash or cheque at the check-in table before round 1.", Multiline: true}},
+	"offline_bank":      {{Name: "bank_details", Label: "Bank details", Placeholder: "Account name, institution, transit and account numbers", Multiline: true}},
+	"offline_cheque":    {{Name: "cheque_note", Label: "Payable to, and where to send it", Placeholder: "e.g. Payable to Victoria Junior Chess Society, mailed to …", Multiline: true}},
+}
+
 type checkoutPage struct {
 	Message, Error string
 	NoKey, Live    bool
@@ -101,6 +124,7 @@ type checkoutPage struct {
 	Shipping       shippingView
 	Methods        []methodView
 	Button         string
+	Offline        []offlineView
 }
 
 // checkout serves the page and its saves.
@@ -271,6 +295,18 @@ func (a *App) fillCheckout(ctx context.Context, pg *checkoutPage) {
 			Label: cv["label_"+k.name], Note: cv["note_"+k.name], Default: cv["default"] == k.name})
 	}
 	pg.Button = cv["button"]
+	for _, m := range payment.OfflineMethods() {
+		ov := offlineView{Name: m.Name, Label: m.Label, Note: m.Note, On: cv[m.Name] == "1"}
+		for _, f := range offlineFields[m.Name] {
+			f.Value = cv[f.Name]
+			ov.Fields = append(ov.Fields, f)
+		}
+		pg.Offline = append(pg.Offline, ov)
+		if ov.On {
+			pg.Methods = append(pg.Methods, methodView{Name: m.Name, Kind: m.Kind, DefaultLabel: m.Label, DefaultNote: m.Note,
+				Label: cv["label_"+m.Name], Note: cv["note_"+m.Name], Default: cv["default"] == m.Name})
+		}
+	}
 }
 
 func withoutStoreOwned(fs []ux.FormField) []ux.FormField {
@@ -462,13 +498,37 @@ func (a *App) saveCheckout(rq *request) (anchor, msg string, err error) {
 			return "shipping", "Shipping is on.", nil
 		}
 		return "shipping", "No shipping: checkout asks for no shipping address.", nil
+	case "offline":
+		v := map[string]string{}
+		for _, m := range payment.OfflineMethods() {
+			on := f.Get(m.Name) == "1"
+			v[m.Name] = ""
+			if on {
+				v[m.Name] = "1"
+			}
+			for _, fl := range offlineFields[m.Name] {
+				v[fl.Name] = strings.TrimSpace(f.Get(fl.Name))
+			}
+			if on && m.Name == "offline_etransfer" && v["etransfer_to"] == "" {
+				return "", "", errors.New("give the email (or phone) e-Transfers are sent to")
+			}
+		}
+		if err := a.storeCheckout(ctx, rq.p.ID, v); err != nil {
+			return "", "", err
+		}
+		return "offline", "Saved the other ways to pay.", nil
 	case "methods":
 		v := map[string]string{"default": strings.TrimSpace(f.Get("default")), "button": strings.TrimSpace(f.Get("button"))}
+		names := []string{}
 		for _, n := range payNames {
-			for _, p := range listener.ProviderNames(a.Reg.Settings(n)["providers"]) {
-				v["label_"+p] = strings.TrimSpace(f.Get("label_" + p))
-				v["note_"+p] = strings.TrimSpace(f.Get("note_" + p))
-			}
+			names = append(names, listener.ProviderNames(a.Reg.Settings(n)["providers"])...)
+		}
+		for _, m := range payment.OfflineMethods() {
+			names = append(names, m.Name)
+		}
+		for _, p := range names {
+			v["label_"+p] = strings.TrimSpace(f.Get("label_" + p))
+			v["note_"+p] = strings.TrimSpace(f.Get("note_" + p))
 		}
 		if err := a.storeCheckout(ctx, rq.p.ID, v); err != nil {
 			return "", "", err

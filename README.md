@@ -97,8 +97,9 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   offers the methods the store turned on (`ux.Engine.Pay`); saved, it goes to the payment
   page `/_dd/pay/<resource>/<id>`, which follows the payment with `pay.js` and sends the
   payer to the processor. The processors return to `/_dd/pay/<resource>/<id>/return`
-  (`payment.Listener.SetReturnVia`), where the payment is marked approved with the
-  processor's token as the signed-in payer, and `/cancel`; where the payer then goes is a
+  (`payment.Listener.SetReturnVia`), where the server records the payment approved with
+  the processor's token for the signed-in payer whose payment it is (never an offline
+  one; the payer can't write a payment's status themselves), and `/cancel`; where the payer then goes is a
   path of the app only.
 - **The admin area** is the same in every app and styled by its theme: Service
   Configuration, **Media** (`/admin/media`) and **Admins** (`/admin/admins`) are the

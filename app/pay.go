@@ -85,6 +85,24 @@ func (a *App) payOffer(class string) *ux.PayOffer {
 		}
 		o.Methods = append(o.Methods, pm)
 	}
+	// The offline ways to pay the store turned on (an e-Transfer, in person …).
+	for _, m := range payment.OfflineMethods() {
+		if words[m.Name] != "1" {
+			continue
+		}
+		label, note := m.Label, m.Note
+		if v := words["label_"+m.Name]; v != "" {
+			label = v
+		}
+		if v := words["note_"+m.Name]; v != "" {
+			note = v
+		}
+		o.Methods = append(o.Methods, ux.PayMethod{Value: m.Name, Kind: m.Kind, Label: label, Note: note, Flow: m.Flow, Submit: offlineSubmit[m.Name]})
+	}
+	if len(o.Methods) > 1 && o.Methods[0].Kind == "test" {
+		o.Methods = o.Methods[1:] // offline methods offered: no stand-in test method beside them
+		o.Test = false
+	}
 	return o
 }
 
@@ -218,23 +236,35 @@ var approvalTokenParams = []string{"amazonCheckoutSessionId", "token", "session_
 // approvePayment marks a payment waiting at the processor approved, with
 // the processor's reference: the listener then captures it. A payment past
 // that (already approved, captured, failed) is left as it is.
+//
+// The payment's status is the processor's and the admins' (the payer may
+// not write it): the server records the approval for the payer — theirs
+// alone (the payment's owner), and never for an offline method, which the
+// store records received itself.
 func (a *App) approvePayment(rq *request, rec *runtime.Record, q url.Values) error {
 	if st, _ := rec.Get("status").(string); st != "approval_pending" {
 		return nil
 	}
-	in := map[string]any{"status": "approved"}
+	if prov, _ := rec.Get("provider").(string); payment.IsOffline(prov) {
+		return nil
+	}
+	if owner := ownerOf(rec.Class); owner != "" && rec.Int(owner) != rq.p.ID && !rq.p.Admin {
+		return fmt.Errorf("not the payer's payment")
+	}
+	rec.Values["status"] = "approved"
 	for _, k := range approvalTokenParams {
 		if v := q.Get(k); v != "" {
 			if rec.Class.Slot("approval_token") != nil {
-				in["approval_token"] = v
+				rec.Values["approval_token"] = v
 			}
 			break
 		}
 	}
-	if errs := a.Reg.AssignFor(rq.ctx(), rec, rq.p, in, ""); errs != nil {
-		return fmt.Errorf("%v", errs)
+	h, err := a.Reg.Class(rec.Class.Name)
+	if err != nil {
+		return err
 	}
-	return a.engine.Save(rq.ctx(), rq.p, rec)
+	return h.Save(rq.ctx(), rec)
 }
 
 // checkoutSettings is the name the Payment Checkout page's own settings are
@@ -264,6 +294,11 @@ func (a *App) setCheckoutValues(v map[string]string) {
 func (a *App) shopValues() map[string]any {
 	cv := a.checkoutValues()
 	out := map[string]any{"ships": cv["ships"] == "1"}
+	for _, k := range []string{"etransfer_to", "etransfer_note", "in_person_note", "bank_details", "cheque_note"} {
+		if v := cv[k]; v != "" {
+			out[k] = v
+		}
+	}
 	if c := cv["country"]; c != "" {
 		out["country"] = c
 	}
@@ -274,4 +309,12 @@ func (a *App) shopValues() map[string]any {
 		}
 	}
 	return out
+}
+
+// offlineSubmit is the payment step's button for an offline way to pay.
+var offlineSubmit = map[string]string{
+	"offline_etransfer": "Place order — pay by e-Transfer",
+	"offline_in_person": "Place order — pay in person",
+	"offline_bank":      "Place order — pay by bank transfer",
+	"offline_cheque":    "Place order — pay by cheque",
 }
