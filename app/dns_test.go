@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/timeofmind/data-driven-framework-go/runtime"
 )
 
 // fakeZone is example.com's DNS behind Cloudflare's API.
@@ -135,6 +137,13 @@ func TestDNSPage(t *testing.T) {
 	if f.find("TXT", "example.com") == nil || f.find("A", "example.com") == nil {
 		t.Fatalf("the needed records are put in place once the token works: %v", f.recs)
 	}
+	noted := func() int {
+		all, _ := a.dnsAdded().List(context.Background(), runtime.Query{Limit: 100})
+		return len(all)
+	}
+	for noted() < 2 && time.Now().Before(deadline) { // the note follows the record
+		time.Sleep(20 * time.Millisecond)
+	}
 
 	_, body, _ = b.get("/admin/dns")
 	if !a.adminSectionShown("/admin/dns") {
@@ -144,6 +153,35 @@ func TestDNSPage(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("the page lacks %q", want)
 		}
+	}
+
+	if !strings.Contains(body, "Every record the app needs is in place.") {
+		t.Errorf("the page says the zone is whole:\n%s", body)
+	}
+
+	// A record the app needs that was never put in place (the leader has not
+	// come round yet) is put in place by the page itself, which says so.
+	all, _ := a.dnsAdded().List(context.Background(), runtime.Query{Limit: 100})
+	var notes []*runtime.Record
+	for _, n := range all {
+		if n.String("type") == "A" {
+			notes = append(notes, n)
+		}
+	}
+	if len(notes) != 1 {
+		for _, n := range all {
+			t.Logf("note %v", n.Values)
+		}
+		t.Fatalf("the A record noted once: %d of %d", len(notes), len(all))
+	}
+	a.dnsAdded().Delete(context.Background(), notes[0].ID())
+	aID := f.find("A", "example.com")["id"].(string)
+	f.mu.Lock()
+	delete(f.recs, aID)
+	f.mu.Unlock()
+	_, body, _ = b.get("/admin/dns")
+	if !strings.Contains(body, "Just added A example.com at Cloudflare.") || f.find("A", "example.com") == nil {
+		t.Errorf("the page puts a pending record in place and says so:\n%s", body)
 	}
 
 	// An admin deletes the SPF: it is not added back, but offered.
@@ -156,7 +194,7 @@ func TestDNSPage(t *testing.T) {
 		t.Error("a needed record an admin deleted is not added back")
 	}
 	_, body, _ = b.get("/admin/dns")
-	if !strings.Contains(body, ">missing<") || !strings.Contains(body, `name="op" value="fulfil"`) {
+	if !strings.Contains(body, ">missing<") || !strings.Contains(body, `name="op" value="fulfil"`) || !strings.Contains(body, "isn&#39;t put back by itself") || strings.Contains(body, "Just added TXT") {
 		t.Errorf("the deleted record is offered:\n%s", body)
 	}
 	if code, body, _ := b.post("/admin/dns", url.Values{"op": {"fulfil"}, "listener": {"dns"}, "need": {"0"}}); code != http.StatusSeeOther {

@@ -117,19 +117,26 @@ func (a *App) dnsListener(name string) (*cloudflare.Listener, error) {
 // settings are saved (kickDNS).
 func (a *App) startDNS(ctx context.Context) {
 	go func() {
-		t := time.NewTicker(dnsEvery)
-		defer t.Stop()
 		for {
-			a.keepDNS(ctx)
+			wait := dnsEvery
+			if !a.keepDNS(ctx) {
+				wait = dnsRetry // no leader yet after a start, or Cloudflare failed: soon again
+			}
+			t := time.NewTimer(wait)
 			select {
 			case <-ctx.Done():
+				t.Stop()
 				return
 			case <-t.C:
 			case <-a.dns.kick:
+				t.Stop()
 			}
 		}
 	}()
 }
+
+// dnsRetry is how soon the zones are kept again when they could not be.
+var dnsRetry = time.Minute
 
 func (a *App) kickDNS() {
 	if a.dns == nil {
@@ -142,24 +149,32 @@ func (a *App) kickDNS() {
 }
 
 // keepDNS checks each zone's token, and on the leader puts the records the
-// app needs in place.
-func (a *App) keepDNS(ctx context.Context) {
+// app needs in place. It reports whether that was done for every zone whose
+// token works (false: not the leader yet, or Cloudflare failed).
+func (a *App) keepDNS(ctx context.Context) bool {
+	done := true
 	for _, name := range dnsListenerNames(a.Reg) {
 		l, err := a.dnsListener(name)
 		if err == nil {
 			cctx, cancel := context.WithTimeout(ctx, time.Minute)
 			err = l.Verify(cctx)
-			if err == nil && a.Reg.Leading() {
+			switch {
+			case err != nil:
+			case !a.Reg.Leading():
+				done = false // the leader does it; a node just started may not know it yet
+			default:
 				if msgs, ferr := a.fulfilDNS(cctx, name, l); ferr != nil {
+					done = false
 					a.log.Warn("DNS: the records the app needs were not all put in place", "listener", name, "zone", l.Zone(), "error", ferr)
 				} else if len(msgs) > 0 {
-					a.log.Info("DNS: put the records the app needs in place", "listener", name, "zone", l.Zone(), "done", msgs)
+					a.log.Warn("DNS: put the records the app needs in place", "listener", name, "zone", l.Zone(), "done", msgs)
 				}
 			}
 			cancel()
 		}
 		a.dnsSet(name, err)
 	}
+	return done
 }
 
 // fulfilDNS puts in place each needed record not put there before.
@@ -237,9 +252,14 @@ type dnsNeedRow struct {
 
 type dnsZoneView struct {
 	Listener, Zone, Problem string
-	Needs                   []dnsNeedRow
-	NeedProblems            []string
-	Records                 []dnsRow
+	// Done is what the page just put in place, FulfilError why it could not,
+	// NeedsNote how the zone stands with what the app needs, in words.
+	Done         []string
+	FulfilError  string
+	NeedsNote    string
+	Needs        []dnsNeedRow
+	NeedProblems []string
+	Records      []dnsRow
 }
 
 type dnsEdit struct {
@@ -318,7 +338,29 @@ func (a *App) dnsAdmin(rq *request) error {
 			pg.Zones = append(pg.Zones, zv)
 			continue
 		}
+		noted, _ := a.dnsNoted(ctx, name)
+		if rq.r.Method == http.MethodGet && dnsPending(l.Check(zone), noted) {
+			// The token works and a record the app needs was never put in
+			// place: do it now, rather than show it missing until the
+			// leader's next pass.
+			done, ferr := a.fulfilDNS(ctx, name, l)
+			zv.Done = done
+			if ferr != nil {
+				zv.FulfilError = "A record the app needs could not be put in place: " + ferr.Error()
+			}
+			if len(done) > 0 {
+				a.log.Warn("DNS: put the records the app needs in place", "listener", name, "zone", l.Zone(), "done", done)
+				for i, d := range done {
+					zv.Done[i] = "Just " + d + " at Cloudflare."
+				}
+			}
+			if z, err := l.List(ctx); err == nil {
+				zone = z
+			}
+			noted, _ = a.dnsNoted(ctx, name)
+		}
 		needs := l.Check(zone)
+		zv.NeedsNote = dnsNeedsNote(needs, noted)
 		why := map[string]string{}
 		for _, st := range needs {
 			row := dnsNeedRow{NeedState: st}
@@ -330,6 +372,9 @@ func (a *App) dnsAdmin(rq *request) error {
 				row.Class, row.Fixable = "todo", true
 				if st.ID != "" {
 					why[st.ID] = orWord(st.Purpose, "the app")
+				}
+				if noted[dnsKey(st)] && row.Detail == "" {
+					row.Detail = "changed or deleted at Cloudflare since it was put in place; " + map[bool]string{true: "Add", false: "Update"}[st.State == "missing"] + " puts it back"
 				}
 			default:
 				row.Class = "off"
@@ -467,4 +512,49 @@ func (a *App) saveDNS(rq *request) (string, error) {
 		return strings.ToUpper(msg[:1]) + msg[1:] + " at Cloudflare.", nil
 	}
 	return "", errStatus(http.StatusBadRequest, "unknown action")
+}
+
+// dnsPending says whether a record the app needs was never put in place
+// though it could be.
+func dnsPending(needs []cloudflare.NeedState, noted map[string]bool) bool {
+	for _, st := range needs {
+		if (st.State == "missing" || st.State == "differs") && !noted[dnsKey(st)] {
+			return true
+		}
+	}
+	return false
+}
+
+// dnsNeedsNote says in words how the zone stands with what the app needs.
+func dnsNeedsNote(needs []cloudflare.NeedState, noted map[string]bool) string {
+	var in, back, taken, outside int
+	for _, st := range needs {
+		switch st.State {
+		case "in place":
+			in++
+		case "missing", "differs":
+			back++
+		case "taken":
+			taken++
+		case "outside":
+			outside++
+		}
+	}
+	var out []string
+	switch {
+	case in == len(needs):
+		return "Every record the app needs is in place."
+	case in > 0:
+		out = append(out, fmt.Sprintf("%d of the %d records the app needs %s in place.", in, len(needs), map[bool]string{true: "is", false: "are"}[in == 1]))
+	}
+	if back > 0 {
+		out = append(out, "A record the app needs was changed or deleted here or at Cloudflare since it was put in place, so it isn't put back by itself: its button puts it back.")
+	}
+	if taken > 0 {
+		out = append(out, "A name the app needs points elsewhere: the app's record is not put over it. Edit or delete the record there below if the name should be the app's.")
+	}
+	if outside > 0 {
+		out = append(out, "A record the app needs is not in this zone: it belongs in another zone.")
+	}
+	return strings.Join(out, " ")
 }
