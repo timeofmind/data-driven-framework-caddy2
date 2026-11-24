@@ -71,9 +71,17 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   The opt-outs are kept in the app's data (`FrameworkBotExempt`, `dd_bot_exempt`),
   where the hosting reads them for the app's edge site. An app's own page at that path
   keeps it; the server's is then at `/admin/_bot-protection`.
+- **DNS** (`/admin/dns`, with a `cloudflare` listener no class is routed to — a live
+  app's `routing/dns.yaml`): in the menu once the zone and API token given on Service
+  Configuration work. It shows the zone's records as Cloudflare holds them, read on each
+  visit, and adds, edits and deletes them there; the listener's `records` (what the app
+  needs: its mail's SPF and DKIM, its domain's address) are put in place by the leader
+  once the token works, each once (`FrameworkDnsAdded`, `dd_dns_added`), so one an admin
+  deleted is offered, not added back. An app's own page at that path keeps it; the
+  server's is then at `/admin/_dns`.
 - **The admin area** is the same in every app and styled by its theme: Service
   Configuration, **Media** (`/admin/media`) and **Admins** (`/admin/admins`) are the
-  server's three sections (with **Sign-in** and **Bot Protection** when the app has them), and the app names its own in `admin.yaml` beside `app.yaml`
+  server's three sections (with **Sign-in**, **Bot Protection** and **DNS** when the app has them), and the app names its own in `admin.yaml` beside `app.yaml`
   (`sections: [{label, path, level}]`; without it, the app's pages under `/admin/`).
   **Admins** keeps the app's admins and their authority: the `admins` of the server's
   configuration are the owners (level 0, not changed in the app); others are added on

@@ -56,7 +56,7 @@ type adminFile struct {
 // order, after the server's (Services, Media, Admins — the Admins page at
 // adminsAt). Without the file, the app's pages whose path is under /admin/
 // are its sections, in page order, each with its page's level.
-func loadAdminSections(dir string, pages *ux.Site, adminsAt, signinAt, protectAt string) ([]ux.Anchor, error) {
+func loadAdminSections(dir string, pages *ux.Site, adminsAt, signinAt, protectAt, dnsAt string) ([]ux.Anchor, error) {
 	out := []ux.Anchor{{Label: "Services", URL: servicesPath, Level: servicesLevel}, {Label: "Media", URL: mediaPath},
 		{Label: "Admins", URL: adminsAt, Level: adminsLevel}}
 	if signinAt != "" { // the routing names a signin listener
@@ -64,6 +64,9 @@ func loadAdminSections(dir string, pages *ux.Site, adminsAt, signinAt, protectAt
 	}
 	if protectAt != "" { // the app is behind an edge with the bot defence
 		out = append(out, ux.Anchor{Label: "Bot Protection", URL: protectAt, Level: servicesLevel})
+	}
+	if dnsAt != "" { // the routing names a zone the server keeps
+		out = append(out, ux.Anchor{Label: "DNS", URL: dnsAt, Level: servicesLevel})
 	}
 	own := len(out)
 	b, err := os.ReadFile(filepath.Join(dir, "admin.yaml"))
@@ -99,7 +102,7 @@ func loadAdminSections(dir string, pages *ux.Site, adminsAt, signinAt, protectAt
 				if !strings.HasPrefix(p.Path, "/admin/") || strings.Contains(p.Path, "{") || p.Shared {
 					continue
 				}
-				if pth := strings.TrimRight(p.Path, "/"); pth == adminsPath || pth == signinPath || pth == protectPath {
+				if pth := strings.TrimRight(p.Path, "/"); pth == adminsPath || pth == signinPath || pth == protectPath || pth == dnsPath {
 					continue // the app's own page there is reached by its own links
 				}
 				out = append(out, ux.Anchor{Label: p.LabelText(), URL: strings.TrimRight(p.Path, "/"), Level: p.Level})

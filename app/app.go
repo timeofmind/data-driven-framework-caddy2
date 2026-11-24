@@ -29,7 +29,7 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/generator"
 	"github.com/timeofmind/data-driven-framework-go/listener"
 	"github.com/timeofmind/data-driven-framework-go/listener/appbuilder"
-	_ "github.com/timeofmind/data-driven-framework-go/listener/cloudflare"
+	"github.com/timeofmind/data-driven-framework-go/listener/cloudflare"
 	"github.com/timeofmind/data-driven-framework-go/listener/hooks"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/http"
 	_ "github.com/timeofmind/data-driven-framework-go/listener/image"
@@ -127,7 +127,11 @@ type App struct {
 	adminsPath string
 	// protectPath is where the Bot Protection page is ("": no bot defence).
 	protectPath string
-	adminMu     sync.Mutex
+	// dnsPath is where the DNS page is ("": no zone kept by the server), and
+	// dns what this node knows of the zones.
+	dnsPath string
+	dns     *dnsState
+	adminMu sync.Mutex
 	// Sign-in providers (signin.go): where the page is, the providers as
 	// they are set up, their discovery documents; signinHTTP is a test's
 	// client in place of the guarded one.
@@ -458,13 +462,23 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 			protectAt = protectPathTaken // the app's own page there stays the app's
 		}
 	}
-	adminSections, err := loadAdminSections(cfg.AppDir, pages, adminsAt, signinAt, protectAt)
+	// The DNS page is there when the routing names a cloudflare listener no
+	// class is routed to (a live app's zone); in the menu once its token works.
+	dnsAt := ""
+	if len(dnsListenerNames(reg)) > 0 {
+		dnsAt = dnsPath
+		if p, _ := pages.Match(dnsPath); p != nil {
+			dnsAt = dnsPathTaken // the app's own page there stays the app's
+		}
+		a.dns = &dnsState{errs: map[string]error{}, kick: make(chan struct{}, 1)}
+	}
+	adminSections, err := loadAdminSections(cfg.AppDir, pages, adminsAt, signinAt, protectAt, dnsAt)
 	if err != nil {
 		cancel()
 		reg.Close()
 		return nil, err
 	}
-	a.sections, a.adminsPath, a.signinPath, a.protectPath = adminSections, adminsAt, signinAt, protectAt
+	a.sections, a.adminsPath, a.signinPath, a.protectPath, a.dnsPath = adminSections, adminsAt, signinAt, protectAt, dnsAt
 	for _, n := range reg.ClassNames() {
 		if frameworkClass(n) {
 			continue
@@ -496,7 +510,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	a.site, err = webux.New(webux.Options{
 		Engine: a.engine, Name: man.Name, Tagline: man.Tagline, Nav: man.Nav, ThemeDir: man.ThemeDir(), MobileDir: man.MobileDir(),
 		Signup: a.auth != nil && man.signupEnabled(), Reset: a.resetEnabled(), Log: cfg.Logger,
-		Upload: a.uploadView, UploadInfo: a.uploadInfo, AdminSections: adminSections, AdminNotices: a.adminNotices,
+		Upload: a.uploadView, UploadInfo: a.uploadInfo, AdminSections: adminSections, AdminNotices: a.adminNotices, AdminSectionShown: a.adminSectionShown,
 		SolverScript: cfg.BotDefence,
 		SignedOut: func(rq *webux.Request) {
 			if rq.Viewer != nil {
@@ -510,6 +524,9 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return fail(err)
 	}
 	go a.watchSettings()
+	if a.dns != nil {
+		a.startDNS(a.bg)
+	}
 	return a, nil
 }
 
@@ -522,6 +539,9 @@ func (a *App) readyListener(l listener.Listener) error {
 	cfg, reg := a.cfg, a.Reg
 	if h, ok := l.(hooks.Hooked); ok {
 		h.SetHooks(a.hooks)
+	}
+	if _, ok := l.(*cloudflare.Listener); ok {
+		defer a.kickDNS() // a zone given its settings: checked, and its records put in place
 	}
 	// A lookup (http) checks its URL's placeholders and mapped slots against the classes routed to it.
 	if c, ok := l.(interface{ CheckRoutes() error }); ok {
@@ -678,6 +698,8 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		a.wrap(rq, a.mediaAdmin)
 	case a.protectPath != "" && path == a.protectPath:
 		a.wrap(rq, a.protectionAdmin)
+	case a.dnsPath != "" && path == a.dnsPath:
+		a.wrap(rq, a.dnsAdmin)
 	case path == a.adminsPath:
 		a.wrap(rq, a.adminsAdmin)
 	case path == a.signinPath && a.auth != nil:
