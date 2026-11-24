@@ -45,7 +45,7 @@ import (
 	"github.com/timeofmind/data-driven-framework-go/model"
 	"github.com/timeofmind/data-driven-framework-go/routing"
 	"github.com/timeofmind/data-driven-framework-go/runtime"
-	"github.com/timeofmind/data-driven-framework-go/schema"
+	"github.com/timeofmind/data-driven-framework-go/shop"
 	"github.com/timeofmind/data-driven-framework-go/ux"
 	webux "github.com/timeofmind/data-driven-framework-go/web-ux"
 )
@@ -202,11 +202,12 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	m, err := schema.Load(frameworkSources(files)...)
+	// The commerce classes and pages (shop) join an app that sells something.
+	m, err := shop.Load(frameworkSources(files)...)
 	if err != nil {
 		return nil, err
 	}
-	pages, err := ux.Load(m, pageFiles...)
+	pages, err := shop.LoadSite(m, pageFiles...)
 	if err != nil {
 		return nil, err
 	}
@@ -635,6 +636,9 @@ func openRegistry(m *model.Model, man *Manifest, cfg Config) (*runtime.Registry,
 	}
 	rt, err := routing.Load(files...)
 	if err != nil {
+		return nil, err
+	}
+	if err := shop.Route(rt, m); err != nil { // an app's ShopPayment goes to its payment listener
 		return nil, err
 	}
 	// A destination the routing names without all its settings (a bucket

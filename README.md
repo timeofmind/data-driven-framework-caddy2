@@ -89,6 +89,10 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   settings are kept under `_checkout` in `FrameworkServiceSetting`; pages read them as
   `shop.ships`, `shop.currency`, `shop.country`. An app's own page at that path keeps it;
   the server's is then at `/admin/_checkout`.
+- **The framework's orders** (`shop`): an app whose model has a `sold:` class gets the
+  commerce classes (`shop.Load`), the cart, order, orders and admin order pages for the
+  paths it doesn't have pages at (`shop.LoadSite`), and `ShopPayment` routed to its payment
+  listener (`shop.Route`).
 - **The payment step** (`pay.go`): a form creating a record routed to a payment listener
   offers the methods the store turned on (`ux.Engine.Pay`); saved, it goes to the payment
   page `/_dd/pay/<resource>/<id>`, which follows the payment with `pay.js` and sends the
