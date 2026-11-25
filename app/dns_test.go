@@ -239,3 +239,21 @@ func TestDNSPageNotForAnAppsOwnRecords(t *testing.T) {
 		t.Errorf("a DNS page at %s", a.dnsPath)
 	}
 }
+
+// An app keeping its own records whose listener also names the records the
+// app needs (the builder's, for its domains) is kept by the server too: it
+// gets the DNS page, and its records are put in place.
+func TestDNSPageForAnAppsOwnRecordsWithRecords(t *testing.T) {
+	if os.Getenv("DDF_TEST_MYSQL_DSN") != "" {
+		t.Skip("the routed fixture is SQLite")
+	}
+	dir := servicesFixture(t, true)
+	os.WriteFile(filepath.Join(dir, "routing", "dns.yaml"), []byte("listeners:\n  dns: {type: cloudflare, zone: example.com, replaces: 203.0.113.7, records: \"CNAME example.com. edge.karbon.io.\"}\nroutes:\n  Outing: {source: db, flows_to: [db, dns]}\n"), 0o644)
+	a, _ := newServicesApp(t, dir, []byte("a-token-key-shared-by-the-nodes"))
+	if a.dnsPath == "" {
+		t.Error("no DNS page for a listener naming records")
+	}
+	if names := dnsListenerNames(a.Reg); len(names) != 1 || names[0] != "dns" {
+		t.Errorf("kept zones: %v", names)
+	}
+}

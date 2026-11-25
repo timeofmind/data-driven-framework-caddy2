@@ -30,7 +30,8 @@ import (
 // record an admin deleted since is not added back but offered on the page.
 //
 // An app routing a class of its own to a cloudflare listener (records it
-// keeps itself) has no DNS page: the listener is the app's.
+// keeps itself) has no DNS page, the listener being the app's, unless that
+// listener also names `records`: the builder's, for the app's domains.
 
 const (
 	dnsPath      = "/admin/dns"
@@ -44,7 +45,7 @@ var dnsTypes = []string{"A", "AAAA", "CNAME", "TXT", "MX", "SRV", "CAA", "NS"}
 func (a *App) dnsAdded() *runtime.Handle { return a.Reg.MustClass("FrameworkDnsAdded") }
 
 // dnsListenerNames are the routing's cloudflare listeners no class is routed
-// to, sorted.
+// to, and those that name `records`, sorted.
 func dnsListenerNames(reg *runtime.Registry) []string {
 	if reg.Routing == nil {
 		return nil
@@ -58,7 +59,9 @@ func dnsListenerNames(reg *runtime.Registry) []string {
 	}
 	var out []string
 	for name, cfg := range reg.Routing.Listeners {
-		if cfg.Type == cloudflare.Type && !used[name] {
+		// and one the app routes its own records to, once the builder names the
+		// records the app needs there too (its domains' CNAMEs)
+		if cfg.Type == cloudflare.Type && (!used[name] || strings.TrimSpace(cfg.Settings["records"]) != "") {
 			out = append(out, name)
 		}
 	}
