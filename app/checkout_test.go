@@ -393,3 +393,29 @@ interface_views:
 		t.Fatalf("paid by e-Transfer: %v", o.Values)
 	}
 }
+
+// A processor's webhook: no session and no CSRF token; one addressed to no
+// payment listener and provider in use (or the app has no https address the
+// processors could call, as here) is not found, and a GET is not taken.
+func TestPayHook(t *testing.T) {
+	if os.Getenv("DDF_TEST_MYSQL_DSN") != "" {
+		t.Skip("the routed fixture is SQLite")
+	}
+	_, srv := newServicesApp(t, servicesFixture(t, true), []byte("a-token-key-shared-by-the-nodes"))
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/_dd/pay/hook/pay/paypal"},  // test mode, http: no webhooks
+		{"POST", "/_dd/pay/hook/nope/paypal"}, // no such listener
+		{"POST", "/_dd/pay/hook/pay"},         // no provider
+		{"GET", "/_dd/pay/hook/pay/paypal"},
+	} {
+		req, _ := http.NewRequest(c.method, srv.URL+c.path, strings.NewReader(`{"resource":{"id":"O-1"}}`))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s %s: %d", c.method, c.path, resp.StatusCode)
+		}
+	}
+}

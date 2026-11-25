@@ -2,10 +2,12 @@ package app
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/timeofmind/data-driven-framework-go/generator"
 	"github.com/timeofmind/data-driven-framework-go/listener"
@@ -129,6 +131,41 @@ func (a *App) paymentClassByResource(res string) *model.Class {
 	return nil
 }
 
+// payHookPath is where processors' webhooks reach the app:
+// /_dd/pay/hook/<listener>/<provider> (payment.Listener.WebhookURL).
+const payHookPath = payPath + "/hook/"
+
+// payHook takes a processor's webhook. Its body is not trusted: the
+// listener only asks the processor about the payments it names (Notify).
+// Nothing is signed in and no CSRF token is asked for; the answer is 200
+// for anything addressed to a listener and provider in use, so the
+// processor doesn't retry, and 404 otherwise.
+func (a *App) payHook(w http.ResponseWriter, r *http.Request, rest string) {
+	name, provider, ok := strings.Cut(strings.Trim(rest, "/"), "/")
+	if !ok || r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	pl, _ := listener.Unwrap(a.Reg.Listeners[name]).(*payment.Listener)
+	if pl == nil || pl.WebhookURL(provider) == "" {
+		http.NotFound(w, r)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "unreadable", http.StatusBadRequest)
+		return
+	}
+	var form url.Values
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded") {
+		form, _ = url.ParseQuery(string(body))
+	}
+	n := pl.Notify(r.Context(), provider, body, form)
+	a.log.Info("payment webhook", "listener", name, "provider", provider, "payments", n)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte("ok\n"))
+}
+
 // payPage is what the payment page shows.
 type payPage struct {
 	API, Then, Step, Say, Detail, Back, ApproveURL string
@@ -154,6 +191,14 @@ func (a *App) pay(rq *request, rest string) error {
 		step = parts[2]
 	}
 	q := rq.r.URL.Query()
+	if step == "return" {
+		// Back from the processor: the listener asks it now how the payment
+		// stands, whoever is signed in here (or no one), so the payment is
+		// settled even when the approval below can't be recorded.
+		if _, pl := a.paymentListenerFor(c.Name); pl != nil {
+			pl.Nudge(c.Name, id, 5*time.Second)
+		}
+	}
 	if rq.p == nil {
 		// Signed out on the way back (a session that ended at the processor):
 		// signing in brings them back here.

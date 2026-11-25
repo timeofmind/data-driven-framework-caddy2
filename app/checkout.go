@@ -267,6 +267,17 @@ func (a *App) fillCheckout(ctx context.Context, pg *checkoutPage) {
 		if st.Country != "" && !payment.InCountry(k.kind, st.Country) {
 			pg.Problems = append(pg.Problems, fmt.Sprintf("%s has no accounts in %s.", key, shop.CountryName(st.Country)))
 		}
+		// Whether the processor tells the app when a payment moves (settle.go in the
+		// framework): without it, the app still asks about waiting payments itself.
+		if pl, _ := listener.Unwrap(a.Reg.Listeners[k.listener]).(*payment.Listener); pl != nil && pl.Mode() == "live" && acc.err == nil {
+			if ws, has := pl.WebhookStatus()[k.name]; has {
+				if ws == "" {
+					bits = append(bits, "· Webhook in place: a payment settles even if the payer never comes back.")
+				} else {
+					bits = append(bits, "· Webhook: "+ws+". The app still asks the processor about waiting payments every few minutes.")
+				}
+			}
+		}
 		pg.Checks[key] = providerCheck{OK: ok, Text: strings.Join(bits, " ")}
 	}
 	if st.Country == "" {

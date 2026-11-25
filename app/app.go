@@ -584,6 +584,7 @@ func (a *App) readyListener(l listener.Listener) error {
 		if cfg.BaseURL != "" {
 			pl.SetReturnVia(a.payReturnVia) // the payer comes back through /_dd/pay (pay.go)
 		}
+		pl.Start(a.bg) // settles payments waiting at a processor without the payer; on the leader alone
 	}
 	if ml, ok := l.(*mail.Listener); ok {
 		if ml.BaseURL() == "" {
@@ -718,6 +719,8 @@ func (a *App) Handle(w http.ResponseWriter, r *http.Request) bool {
 		if !a.site.ServeScript(a.webRequest(rq), parts[1]) {
 			http.NotFound(w, r)
 		}
+	case strings.HasPrefix(path, payHookPath):
+		a.payHook(w, r, strings.TrimPrefix(path, payHookPath))
 	case strings.HasPrefix(path, payPath+"/"):
 		a.wrap(rq, func(rq *request) error { return a.pay(rq, strings.TrimPrefix(path, payPath)) })
 	case path == servicesPath:
