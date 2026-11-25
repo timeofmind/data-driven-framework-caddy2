@@ -350,7 +350,7 @@ interface_views:
 		t.Fatalf("an e-Transfer waits: %+v", pay)
 	}
 	_, body, _ = ann.get(op)
-	if !strings.Contains(body, "Send your Interac e-Transfer") || !strings.Contains(body, "pay@club.example") || strings.Contains(body, `name="_view" value="pay"`) {
+	if !strings.Contains(body, "Send your Interac e-Transfer") || !strings.Contains(body, "Send $20.00 to pay@club.example") || strings.Contains(body, `name="_view" value="pay"`) {
 		t.Fatalf("the order says how to pay, and offers no second payment:\n%s", body)
 	}
 
