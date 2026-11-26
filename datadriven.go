@@ -73,6 +73,12 @@ type Handler struct {
 	// it has not verified: every page asks for it, and the admin area has the Bot
 	// Protection page. Empty: no such edge.
 	BotDefence string `json:"bot_defence,omitempty"`
+	// Staging marks the node a staging copy (a preview of a live app, on a
+	// copy of its data): it never reaches what the live app reaches — mail,
+	// a mailbox, DNS, the app builder are held, payments run in test mode —
+	// and every page shows a banner saying so. Its value is the live site's
+	// address, the banner's link ("on": none).
+	Staging string `json:"staging,omitempty"`
 	// UML serves the app's UML diagrams at this path; UMLAdmins limits
 	// them to admins.
 	UML       string `json:"uml,omitempty"`
@@ -116,6 +122,7 @@ func (h *Handler) Provision(ctx caddy.Context) error {
 		LogDir:         h.ChangeLog,
 		BaseURL:        h.BaseURL,
 		BotDefence:     h.BotDefence,
+		Staging:        h.Staging,
 		UMLPath:        h.UML,
 		UMLAdmins:      h.UMLAdmins,
 		Cluster:        h.Cluster,
@@ -304,6 +311,13 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			}
 			if !strings.HasPrefix(h.BotDefence, "/") {
 				return d.Errf("bot_defence: the solver script's path, starting with / (/siteprotect/hashcash.js)")
+			}
+		case "staging":
+			if !d.AllArgs(&h.Staging) {
+				return d.Errf("staging: the live site's address (https://example.org), or on")
+			}
+			if h.Staging != "on" && !strings.HasPrefix(h.Staging, "https://") && !strings.HasPrefix(h.Staging, "http://") {
+				return d.Errf("staging: the live site's address (https://example.org), or on")
 			}
 		case "view":
 			if !d.NextArg() {

@@ -252,6 +252,10 @@ example.com {
 		bot_defence    /siteprotect/hashcash.js       # behind an edge with the hosting's
 		                                              # hashcash: every page asks for its
 		                                              # solver; the Bot Protection page
+		staging        https://example.org            # a staging copy (a preview on a copy
+		                                              # of the live data): mail, DNS and the
+		                                              # app builder held, payments in test
+		                                              # mode, a banner linking the live site
 		session_ttl    720h
 		uploads        <dir> [25MB]                   # keep originals; per-file limit
 		token_key_file <file>                         # signs form tokens and admin links,

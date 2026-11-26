@@ -83,6 +83,10 @@ type Config struct {
 	// BotDefence is the edge's bot-defence solver script (bot_defence): on
 	// every page, with the Bot Protection admin page (protection.go).
 	BotDefence string
+	// Staging marks the node a staging copy (staging): its listeners as
+	// listener.Staging says, no DNS kept, a banner on every page. The live
+	// site's address, the banner's link, or "on".
+	Staging string
 	// UMLPath serves the app's UML diagrams there ("" = not served);
 	// UMLAdmins limits them to admins.
 	UMLPath   string
@@ -213,6 +217,9 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A staging copy's listeners are opened as listener.Staging says (one app
+	// per process).
+	listener.SetStaging(cfg.Staging != "")
 	reg, err := openRegistry(m, man, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("datadriven: database: %w", err)
@@ -532,6 +539,8 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		Signup: a.auth != nil && man.signupEnabled(), Reset: a.resetEnabled(), Log: cfg.Logger,
 		Upload: a.uploadView, UploadInfo: a.uploadInfo, AdminSections: adminSections, AdminNotices: a.adminNotices, AdminSectionShown: a.adminSectionShown,
 		SolverScript: cfg.BotDefence,
+		Staging:      stagingBanner(cfg.Staging),
+		StagingLink:  stagingLink(cfg.Staging),
 		MemberImages: func(rq *webux.Request) bool { return a.memberImages(rq.Viewer) },
 		SignedOut: func(rq *webux.Request) {
 			if rq.Viewer != nil {
@@ -545,10 +554,29 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return fail(err)
 	}
 	go a.watchSettings()
-	if a.dns != nil {
-		a.startDNS(a.bg)
+	if a.dns != nil && cfg.Staging == "" {
+		a.startDNS(a.bg) // a staging copy never touches the live app's DNS
 	}
 	return a, nil
+}
+
+// stagingBanner is a staging copy's banner ("" for a live node).
+func stagingBanner(staging string) string {
+	if staging == "" {
+		return ""
+	}
+	if staging == "on" {
+		return "Preview — a copy of the live site's data. Nothing done here reaches the live site: no mail is sent and no payment is charged."
+	}
+	return "Preview — a copy of the live site's data. Nothing done here reaches the live site (no mail is sent, no payment is charged):"
+}
+
+// stagingLink is the live site's address for the banner, when staging names one.
+func stagingLink(staging string) string {
+	if staging == "" || staging == "on" {
+		return ""
+	}
+	return staging
 }
 
 // readyListener prepares a listener as the app needs it, at the start and
