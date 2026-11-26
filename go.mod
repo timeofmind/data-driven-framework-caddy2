@@ -6,7 +6,7 @@ require (
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/muktihari/fit v0.28.5
 	github.com/spf13/cobra v1.10.2
-	github.com/timeofmind/data-driven-framework-go v0.58.7
+	github.com/timeofmind/data-driven-framework-go v0.59.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -161,7 +161,7 @@ require (
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20260929172509-b39ff6d641ec // indirect
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/image v0.48.0 // indirect
-	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect

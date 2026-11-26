@@ -12,11 +12,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/timeofmind/data-driven-framework-go/listener/media"
+	"github.com/timeofmind/data-driven-framework-go/runtime"
 	"github.com/timeofmind/data-driven-framework-go/ux"
 )
 
@@ -179,10 +181,16 @@ func (a *App) mediaRoute(rq *request, parts []string) error {
 	if rq.p == nil {
 		return errStatus(http.StatusUnauthorized, "sign in first")
 	}
-	if !rq.p.AdminAllowed(a.sectionLevel(mediaPath)) {
-		return errForbidden
-	}
 	m := rq.r.Method
+	if !rq.p.AdminAllowed(a.sectionLevel(mediaPath)) {
+		if !rq.p.SignedIn() {
+			return errForbidden
+		}
+		if !a.checkCSRF(rq, rq.r.Header.Get("X-CSRF-Token")) {
+			return errStatus(http.StatusForbidden, "missing or invalid X-CSRF-Token header")
+		}
+		return a.memberPicture(rq, parts)
+	}
 	if m != http.MethodGet && !a.checkCSRF(rq, rq.r.Header.Get("X-CSRF-Token")) {
 		return errStatus(http.StatusForbidden, "missing or invalid X-CSRF-Token header")
 	}
@@ -244,8 +252,20 @@ func (a *App) mediaSlot(rq *request, c *media.Client) error {
 	if err := json.NewDecoder(io.LimitReader(rq.r.Body, 64<<10)).Decode(&req); err != nil {
 		return errStatus(http.StatusBadRequest, "the body is not the JSON of a slot request")
 	}
-	if req.Login == "" {
+	if req.Login == "" || !rq.p.AdminAllowed(a.sectionLevel(mediaPath)) {
 		req.Login = rq.p.Name
+	}
+	if !rq.p.AdminAllowed(a.sectionLevel(mediaPath)) { // a member's picture, for formatted text
+		req.Login = fmt.Sprintf("member %d: %s", rq.p.ID, rq.p.Name)
+		if !memberPictureTypes[strings.ToLower(req.ContentType)] {
+			return errStatus(http.StatusUnsupportedMediaType, "only a picture can be added here (JPEG, PNG, WebP or GIF)")
+		}
+		if req.Size <= 0 || req.Size > memberPictureMax {
+			return errStatus(http.StatusRequestEntityTooLarge, fmt.Sprintf("a picture can be at most %d MB", memberPictureMax>>20))
+		}
+		if !a.memberPictures.take(rq.p.ID, time.Now()) {
+			return errStatus(http.StatusTooManyRequests, fmt.Sprintf("you have added %d pictures today: try again tomorrow, or ask the club", memberPicturesPerDay))
+		}
 	}
 	b, _ := json.Marshal(req)
 	status, rb, err := c.Do(rq.ctx(), http.MethodPost, "/v1/uploads", b)
@@ -277,35 +297,51 @@ func (a *App) mediaSlot(rq *request, c *media.Client) error {
 		"content_type": req.ContentType, "size": req.Size, "upload_token": tok})
 }
 
-// mediaUpload streams the request's body — the file — to the slot named by
-// the upload token, as the slot's presigned POST.
-func (a *App) mediaUpload(rq *request, c *media.Client, mediaID string) error {
+// uploadSlot is a slot's presigned POST, from its upload token.
+type uploadSlot struct {
+	URL    string            `json:"url"`
+	Fields map[string]string `json:"fields"`
+}
+
+// slotOf reads the request's upload token (X-Media-Slot): the slot of the
+// file mediaID, or an error.
+func (a *App) slotOf(rq *request, mediaID string) (*uploadSlot, error) {
 	tok := rq.r.Header.Get("X-Media-Slot")
 	if tok == "" {
-		return errStatus(http.StatusBadRequest, "X-Media-Slot (the slot's upload_token) is required")
+		return nil, errStatus(http.StatusBadRequest, "X-Media-Slot (the slot's upload_token) is required")
 	}
 	var raw string
 	if strings.HasPrefix(tok, "plain:") {
+		if !rq.p.AdminAllowed(a.sectionLevel(mediaPath)) {
+			return nil, errStatus(http.StatusBadRequest, "the upload token is not this server's") // a member's is always sealed
+		}
 		b, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(tok, "plain:"))
 		if err != nil {
-			return errStatus(http.StatusBadRequest, "the upload token is not readable")
+			return nil, errStatus(http.StatusBadRequest, "the upload token is not readable")
 		}
 		raw = string(b)
 	} else {
 		var err error
 		if raw, err = unseal(a.cfg.TokenKey, tok); err != nil {
-			return errStatus(http.StatusBadRequest, "the upload token is not this server's")
+			return nil, errStatus(http.StatusBadRequest, "the upload token is not this server's")
 		}
 	}
-	var up struct {
-		URL    string            `json:"url"`
-		Fields map[string]string `json:"fields"`
-	}
+	var up uploadSlot
 	if err := json.Unmarshal([]byte(raw), &up); err != nil || up.URL == "" {
-		return errStatus(http.StatusBadRequest, "the upload token names no slot")
+		return nil, errStatus(http.StatusBadRequest, "the upload token names no slot")
 	}
-	if key := up.Fields["key"]; key != "" && !strings.HasSuffix(key, mediaID) {
-		return errStatus(http.StatusBadRequest, "the upload token is another file's")
+	if key := up.Fields["key"]; mediaID == "" || !strings.HasSuffix(key, mediaID) {
+		return nil, errStatus(http.StatusBadRequest, "the upload token is another file's")
+	}
+	return &up, nil
+}
+
+// mediaUpload streams the request's body — the file — to the slot named by
+// the upload token, as the slot's presigned POST.
+func (a *App) mediaUpload(rq *request, c *media.Client, mediaID string) error {
+	up, err := a.slotOf(rq, mediaID)
+	if err != nil {
+		return err
 	}
 	ctype := rq.r.Header.Get("Content-Type")
 	if ct := up.Fields["Content-Type"]; ct != "" {
@@ -329,6 +365,67 @@ func (a *App) mediaUpload(rq *request, c *media.Client, mediaID string) error {
 		return errStatus(http.StatusBadGateway, "the file did not reach the bucket: "+err.Error())
 	}
 	return writeJSON(rq, http.StatusOK, map[string]any{"media_id": mediaID, "uploaded": true})
+}
+
+// A signed-in member (not an admin) may add a picture to formatted text (the
+// editor of a format: rich slot): a slot for one picture (JPEG, PNG, WebP or
+// GIF, up to memberPictureMax), its upload and its completion — the last
+// two only with the slot's upload token, so only the member's own picture.
+// The library's other calls (listing, changing, deleting) stay the admins'.
+// A member adds at most memberPicturesPerDay pictures a day on each node.
+const (
+	memberPictureMax     = 8 << 20
+	memberPicturesPerDay = 40
+)
+
+var memberPictureTypes = map[string]bool{"image/jpeg": true, "image/png": true, "image/webp": true, "image/gif": true}
+
+// MemberImages says whether a page's editor may upload the viewer's
+// pictures: a signed-in member, on a node with the media library.
+func (a *App) memberImages(p *runtime.Principal) bool {
+	return p.SignedIn() && len(a.cfg.TokenKey) > 0 && a.mediaClient().Available()
+}
+
+func (a *App) memberPicture(rq *request, parts []string) error {
+	c := a.mediaClient()
+	if !a.memberImages(rq.p) {
+		return errStatus(http.StatusServiceUnavailable, "pictures can't be uploaded on this server (no media library)")
+	}
+	if rq.r.Method != http.MethodPost {
+		return errForbidden
+	}
+	switch {
+	case len(parts) == 1 && parts[0] == "slot":
+		return a.mediaSlot(rq, c)
+	case len(parts) == 2 && parts[1] == "upload":
+		return a.mediaUpload(rq, c, parts[0])
+	case len(parts) == 2 && parts[1] == "complete":
+		if _, err := a.slotOf(rq, parts[0]); err != nil {
+			return err
+		}
+		return a.relay(rq, c, http.MethodPost, "/v1/media/"+parts[0]+"/complete", nil)
+	}
+	return errForbidden
+}
+
+// pictureQuota counts each member's pictures today.
+type pictureQuota struct {
+	mu   sync.Mutex
+	day  string
+	used map[int64]int
+}
+
+func (q *pictureQuota) take(member int64, now time.Time) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if d := now.UTC().Format("2006-01-02"); d != q.day || q.used == nil {
+		q.day, q.used = d, map[int64]int{}
+	}
+	if q.used[member] >= memberPicturesPerDay {
+		return false
+	}
+	q.used[member]++
+	return true
 }
 
 // sortedAnchors is for tests: the sections by label.

@@ -108,19 +108,21 @@ type Config struct {
 
 // App serves one application.
 type App struct {
-	cfg     Config
-	man     *Manifest
-	uploads *runtime.Handle // the upload view's class, if any
-	Model   *model.Model
-	Reg     *runtime.Registry
-	Pages   *ux.Site
-	engine  *ux.Engine
-	site    *webux.Site
-	auth    *runtime.Handle
-	bySlug  map[string]*runtime.Handle // API resources
-	limiter *limiter
-	log     *slog.Logger
-	admins  map[string]bool // the owners: the configuration's admin logins
+	// memberPictures counts the pictures members add to formatted text (media.go).
+	memberPictures pictureQuota
+	cfg            Config
+	man            *Manifest
+	uploads        *runtime.Handle // the upload view's class, if any
+	Model          *model.Model
+	Reg            *runtime.Registry
+	Pages          *ux.Site
+	engine         *ux.Engine
+	site           *webux.Site
+	auth           *runtime.Handle
+	bySlug         map[string]*runtime.Handle // API resources
+	limiter        *limiter
+	log            *slog.Logger
+	admins         map[string]bool // the owners: the configuration's admin logins
 	// The admin area: its sections with the level each asks for, where the
 	// Admins page is, and the admins kept in the app's data as last read.
 	sections   []ux.Anchor
@@ -530,6 +532,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		Signup: a.auth != nil && man.signupEnabled(), Reset: a.resetEnabled(), Log: cfg.Logger,
 		Upload: a.uploadView, UploadInfo: a.uploadInfo, AdminSections: adminSections, AdminNotices: a.adminNotices, AdminSectionShown: a.adminSectionShown,
 		SolverScript: cfg.BotDefence,
+		MemberImages: func(rq *webux.Request) bool { return a.memberImages(rq.Viewer) },
 		SignedOut: func(rq *webux.Request) {
 			if rq.Viewer != nil {
 				a.endAllSessions(rq.R.Context(), rq.Viewer.ID)

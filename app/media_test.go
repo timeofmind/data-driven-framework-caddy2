@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeMedia is dd-media and the bucket's slot endpoint for the page's calls.
@@ -260,5 +261,104 @@ func TestCSPAllowsMediaLibrary(t *testing.T) {
 	_, _, h := newBrowser(t, srv).get("/")
 	if csp := h.Get("Content-Security-Policy"); !strings.Contains(csp, "img-src 'self' data: https://media-bucket.s3.us-east-1.amazonaws.com;") {
 		t.Fatalf("policy: %s", csp)
+	}
+}
+
+// A signed-in member may add a picture to formatted text: a picture's slot,
+// its upload and its completion, each only with the slot's own sealed token;
+// the library's other calls stay the admins'. Pictures only, up to 8 MB, 40
+// a day.
+func TestMemberPictures(t *testing.T) {
+	if os.Getenv("DDF_TEST_MYSQL_DSN") != "" {
+		t.Skip("the routed fixture is SQLite")
+	}
+	f := newFakeMedia(t)
+	dir := servicesFixture(t, true)
+	cfg := Config{AppDir: dir, Driver: "sqlite", DSN: filepath.Join(dir, "club.db"), Admins: []string{"admin@example.com"},
+		TokenKey: []byte("0123456789abcdef0123456789abcdef"), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		MediaURL: f.srv.URL, MediaToken: "dmt_node"}
+	a, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(a)
+	defer srv.Close()
+	defer a.Close()
+
+	// a visitor: nothing
+	v := newBrowser(t, srv)
+	if code, _ := v.call("POST", "/_dd/media/slot", `{"filename":"a.png","content_type":"image/png","size":9}`, "", nil); code != 401 && code != 403 {
+		t.Fatalf("visitor slot: %d", code)
+	}
+	b := newBrowser(t, srv)
+	b.signup("member@example.com", "Member")
+	csrf := b.csrf("/login")
+	if csrf == "" {
+		t.Fatal("no CSRF token")
+	}
+	for _, c := range []struct {
+		body string
+		want int
+	}{
+		{`{"filename":"a.pdf","content_type":"application/pdf","size":9}`, 415},
+		{`{"filename":"a.svg","content_type":"image/svg+xml","size":9}`, 415},
+		{`{"filename":"a.png","content_type":"image/png","size":9000000}`, 413},
+		{`{"filename":"a.png","content_type":"image/png","size":0}`, 413},
+	} {
+		if code, rb := b.call("POST", "/_dd/media/slot", c.body, csrf, nil); code != c.want {
+			t.Errorf("slot %s: %d %s; want %d", c.body, code, rb, c.want)
+		}
+	}
+	if code, _ := b.call("POST", "/_dd/media/slot", `{"filename":"a.png","content_type":"image/png","size":9}`, "", nil); code != 403 {
+		t.Fatalf("no csrf: %d", code)
+	}
+	code, body := b.call("POST", "/_dd/media/slot", `{"filename":"a.png","content_type":"image/png","size":9,"login":"Admin"}`, csrf, nil)
+	if code != 201 {
+		t.Fatalf("slot %d %s", code, body)
+	}
+	var slot struct {
+		MediaID string `json:"media_id"`
+		Token   string `json:"upload_token"`
+	}
+	json.Unmarshal([]byte(body), &slot)
+	if login, _ := f.slots[len(f.slots)-1]["login"].(string); !strings.HasPrefix(login, "member ") || !strings.HasSuffix(login, ": Member") {
+		t.Fatalf("the slot's login is the member's own: %q", login)
+	}
+	if code, _ = b.call("POST", "/_dd/media/med_t1/upload?name=a.png", "PNG-bytes", csrf, map[string]string{"X-Media-Slot": slot.Token, "Content-Type": "image/png"}); code != 200 {
+		t.Fatalf("upload %d", code)
+	}
+	// an unsealed token (anyone could write one) is not taken from a member
+	plain := "plain:" + "eyJ1cmwiOiJodHRwOi8vMTI3LjAuMC4xOjEvIiwiZmllbGRzIjp7ImtleSI6Im1lZF90MSJ9fQ"
+	if code, _ = b.call("POST", "/_dd/media/med_t1/upload", "x", csrf, map[string]string{"X-Media-Slot": plain, "Content-Type": "image/png"}); code != 400 {
+		t.Fatalf("a plain token: %d", code)
+	}
+	if code, _ = b.call("POST", "/_dd/media/med_t1/complete", "", csrf, nil); code != 400 {
+		t.Fatalf("complete without the slot's token: %d", code)
+	}
+	if code, _ = b.call("POST", "/_dd/media/med_other/complete", "", csrf, map[string]string{"X-Media-Slot": slot.Token}); code != 400 {
+		t.Fatalf("complete another's: %d", code)
+	}
+	code, body = b.call("POST", "/_dd/media/med_t1/complete", "", csrf, map[string]string{"X-Media-Slot": slot.Token})
+	if code != 200 || !strings.Contains(body, `"url":"https://media.test/`) {
+		t.Fatalf("complete %d %s", code, body)
+	}
+	for _, c := range [][2]string{{"GET", "/_dd/media"}, {"GET", "/_dd/media/med_t1"}, {"DELETE", "/_dd/media/med_t1"}, {"PATCH", "/_dd/media/med_t1"}} {
+		if code, _ = b.call(c[0], c[1], "", csrf, nil); code != 403 {
+			t.Errorf("member %s %s: %d", c[0], c[1], code)
+		}
+	}
+	if a.memberImages(nil) {
+		t.Error("a visitor may upload")
+	}
+	// 40 a day
+	var q pictureQuota
+	now := time.Now()
+	for i := 0; i < memberPicturesPerDay; i++ {
+		if !q.take(7, now) {
+			t.Fatalf("picture %d refused", i+1)
+		}
+	}
+	if q.take(7, now) || !q.take(8, now) || !q.take(7, now.Add(24*time.Hour)) {
+		t.Error("the day's quota")
 	}
 }

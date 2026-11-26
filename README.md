@@ -128,7 +128,12 @@ drawn as HTML by its `web-ux` package. This handler is the server around them:
   answered with an `upload_token` (the presigned POST sealed under `token_key_file`, so
   any node of the cluster may take the file) and the file is streamed through to the
   bucket, never kept here. Without a token the page says the library is not available.
-  See the framework's `docs/interface-model.md`, "The admin area".
+  A signed-in member who is not an admin may add a picture to formatted text (a
+  `format: rich` slot's editor) the same way — a slot, its upload and its completion,
+  each only with the slot's sealed token (never a `plain:` one), a JPEG, PNG, WebP or GIF
+  up to 8 MB, 40 a day per node, recorded as `member <id>: <name>`; nothing else of the
+  library is theirs. The editor is offered uploads only where a token key and a media
+  token are both set. See the framework's `docs/interface-model.md`, "The admin area".
 - **A notice when saved changes are not being stored**: a destination that keeps
   refusing an entry of the change log (a database that will not take a row) is shown
   to admins on every page of the admin area once it has gone on for a minute — which
@@ -274,7 +279,7 @@ the auth class and has `code`, `expires_at` and `used_at`, and flows wherever th
 sends it — a mail listener with a template holding
 `{{.base_url}}/reset?code={{.record.code}}`), a
 calendar's `/feed`, `/admin/services`, `/admin/checkout`, `/admin/media`, `/static/…`, `/_dd/…` (scripts, `/_dd/pay/…`,
-`/_dd/admin` for an admin link, `/_dd/media/…` for the Media page) and `/api/v1/…`;
+`/_dd/admin` for an admin link, `/_dd/media/…` for the Media page and members' pictures) and `/api/v1/…`;
 everything else falls through to the next handler. A page file may not claim
 `/admin/services` or `/admin/media`.
 
