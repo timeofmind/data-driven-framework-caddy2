@@ -381,6 +381,8 @@ github.com/timeofmind/data-driven-framework-go v0.59.1 h1:Cl1HrINwTpZPG4F2c5u037
 github.com/timeofmind/data-driven-framework-go v0.59.1/go.mod h1:lZ3t0+vDpBNRlEkoAAt1ldQHjIsBFd7M4xpXU3Ct6cY=
 github.com/timeofmind/data-driven-framework-go v0.60.0 h1:SFbT4pQ6o7n3SGYq04uVWXp4X9BsSVVaP3Qt9fhfpB8=
 github.com/timeofmind/data-driven-framework-go v0.60.0/go.mod h1:lZ3t0+vDpBNRlEkoAAt1ldQHjIsBFd7M4xpXU3Ct6cY=
+github.com/timeofmind/data-driven-framework-go v0.61.0 h1:J3CgmcreoHgOqzXSzTpJNr2fIXhQ6dCpJZ49TJ0c+co=
+github.com/timeofmind/data-driven-framework-go v0.61.0/go.mod h1:lZ3t0+vDpBNRlEkoAAt1ldQHjIsBFd7M4xpXU3Ct6cY=
 github.com/ugorji/go/codec v0.0.0-20181204163529-d75b2dcb6bc8/go.mod h1:VFNgLljTbGfSG7qAOspJ7OScBnGdDN/yBr0sguwnwf0=
 github.com/urfave/cli v1.22.17 h1:SYzXoiPfQjHBbkYxbew5prZHS1TOLT3ierW8SYLqtVQ=
 github.com/urfave/cli v1.22.17/go.mod h1:b0ht0aqgH/6pBYzzxURyrM4xXNgsoT/n2ZzwQiEhNVo=
