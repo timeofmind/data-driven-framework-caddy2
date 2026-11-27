@@ -125,8 +125,15 @@ func (a *App) apiRoute(rq *request, parts []string) error {
 		if rq.p == nil || !rq.p.Admin {
 			return errForbidden
 		}
-		if a.Reg.View != nil {
-			a.Reg.View.Clear()
+		// Every live node of the cluster drops what it holds, not only
+		// this one: a change made outside the framework is seen everywhere.
+		cleared, failed := a.Reg.ClearCache(rq.ctx())
+		if len(failed) > 0 {
+			out := map[string]string{}
+			for n, err := range failed {
+				out[n] = err.Error()
+			}
+			return writeJSON(rq, http.StatusBadGateway, map[string]any{"cleared": cleared, "failed": out})
 		}
 		rq.w.WriteHeader(http.StatusNoContent)
 		return nil

@@ -356,6 +356,10 @@ ascent_m, avg_hr, max_hr`. Readers are pluggable (`importer.Register`).
 - Every API answer carries `X-CSRF-Token`; a visitor becoming a guest keeps their token.
 - `GET/POST/DELETE /api/v1/_parked` (admins): entries a destination gave up on — list,
   replay one after mending what refused it, or drop it; `_stats` counts them.
+- `DELETE /api/v1/_cache` (admins): drop what the data view holds in memory after a
+  change made outside the framework (an administrator's SQL) — on every live node of
+  the cluster, not only the one answering; 204 when all cleared, else 502 with
+  `{cleared, failed}` naming the nodes that could not be reached.
 - Strict Content-Security-Policy (only the site's own scripts; no inline script, no
   eval), `nosniff`, `frame-ancestors 'none'`.
 - Every page write is declared by its interface view and enforced: a form writes only
