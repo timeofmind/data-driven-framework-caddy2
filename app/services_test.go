@@ -377,7 +377,7 @@ func TestServiceConfigurationProviders(t *testing.T) {
 	if err := a.Reg.Unconfigured("pay"); err != nil {
 		t.Fatalf("amazonpay: %v", err)
 	}
-	if _, _, h := b.get("/"); !strings.Contains(h.Get("Content-Security-Policy"), "script-src 'self' https://static-na.payments-amazon.com") || !strings.Contains(h.Get("Content-Security-Policy"), "frame-src https://static-na.payments-amazon.com") {
+	if _, _, h := b.get("/"); !strings.Contains(h.Get("Content-Security-Policy"), "script-src 'self' https://static-na.payments-amazon.com") || !strings.Contains(h.Get("Content-Security-Policy"), "frame-src https://www.youtube-nocookie.com https://player.vimeo.com https://static-na.payments-amazon.com") {
 		t.Fatalf("the CSP admits Amazon Pay: %s", h.Get("Content-Security-Policy"))
 	}
 	// Nothing ticked, back to test mode: runs again with no provider.

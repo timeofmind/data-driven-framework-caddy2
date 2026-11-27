@@ -189,6 +189,18 @@ func (a *App) mediaRoute(rq *request, parts []string) error {
 		if !a.checkCSRF(rq, rq.r.Header.Get("X-CSRF-Token")) {
 			return errStatus(http.StatusForbidden, "missing or invalid X-CSRF-Token header")
 		}
+		if len(parts) == 0 && m == http.MethodGet && a.memberLibrary(rq.ctx(), rq.p) {
+			// one of the app's editors (media_library) choosing a picture: the list alone
+			c := a.mediaClient()
+			if !c.Available() {
+				return errStatus(http.StatusServiceUnavailable, "the media library is not available on this server (no media token)")
+			}
+			q := ""
+			if rq.r.URL.RawQuery != "" {
+				q = "?" + rq.r.URL.RawQuery
+			}
+			return a.relay(rq, c, http.MethodGet, "/v1/media"+q, nil)
+		}
 		return a.memberPicture(rq, parts)
 	}
 	if m != http.MethodGet && !a.checkCSRF(rq, rq.r.Header.Get("X-CSRF-Token")) {
@@ -384,6 +396,19 @@ var memberPictureTypes = map[string]bool{"image/jpeg": true, "image/png": true, 
 // pictures: a signed-in member, on a node with the media library.
 func (a *App) memberImages(p *runtime.Principal) bool {
 	return p.SignedIn() && len(a.cfg.TokenKey) > 0 && a.mediaClient().Available()
+}
+
+// memberLibrary says whether a page's editor may list the app's media
+// library for the viewer to choose a picture from: an admin who may open the
+// Media section, or a member the manifest's media_library rule names.
+func (a *App) memberLibrary(ctx context.Context, p *runtime.Principal) bool {
+	if p == nil || !p.SignedIn() || !a.mediaClient().Available() {
+		return false
+	}
+	if p.AdminAllowed(a.sectionLevel(mediaPath)) {
+		return true
+	}
+	return a.mediaLibrary != nil && a.engine.ViewerHolds(ctx, p, a.mediaLibrary)
 }
 
 func (a *App) memberPicture(rq *request, parts []string) error {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/timeofmind/data-driven-framework-go/expr"
 	"io"
 	"log/slog"
 	"net/http"
@@ -349,6 +350,25 @@ func TestMemberPictures(t *testing.T) {
 	}
 	if a.memberImages(nil) {
 		t.Error("a visitor may upload")
+	}
+	// The app's editors (media_library) list the library to choose from; nothing more.
+	a.mediaLibrary, _ = expr.Parse("viewer.name == 'Editor'")
+	if code, _ = b.call("GET", "/_dd/media", "", csrf, nil); code != 403 {
+		t.Errorf("a member the rule doesn't name lists the library: %d", code)
+	}
+	ed := newBrowser(t, srv)
+	ed.signup("editor@example.com", "Editor")
+	ecsrf := ed.csrf("/login")
+	if code, body = ed.call("GET", "/_dd/media?type=image", "", ecsrf, nil); code != 200 {
+		t.Errorf("an editor lists the library: %d %s", code, body)
+	}
+	for _, c := range [][2]string{{"GET", "/_dd/media/med_t1"}, {"DELETE", "/_dd/media/med_t1"}, {"PATCH", "/_dd/media/med_t1"}} {
+		if code, _ = ed.call(c[0], c[1], "", ecsrf, nil); code != 403 {
+			t.Errorf("editor %s %s: %d", c[0], c[1], code)
+		}
+	}
+	if code, _ = ed.call("GET", "/_dd/media", "", "", nil); code != 403 {
+		t.Errorf("an editor without the CSRF token: %d", code)
 	}
 	// 40 a day
 	var q pictureQuota

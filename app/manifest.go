@@ -52,6 +52,12 @@ type Manifest struct {
 	// app's own (a media bucket's: https://bucket.s3.amazonaws.com); they
 	// go into the pages' Content Security Policy.
 	ImageHosts []string `yaml:"image_hosts"`
+	// MediaLibrary: who besides the admins may choose pictures already in
+	// the app's media library from a page's editor — an expression over the
+	// viewer ("viewer.role == 'editor'"); empty: the admins alone. They list
+	// the library (GET /_dd/media); adding to it is every signed-in member's,
+	// and changing or removing what is there stays the admins'.
+	MediaLibrary string `yaml:"media_library"`
 	// Guests tunes guests (the auth class's guest slot enables them): the
 	// display name a guest row gets, how many new guests and how many
 	// guests' writes an address may make per hour, and how long an idle

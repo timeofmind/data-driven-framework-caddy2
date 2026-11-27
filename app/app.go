@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/timeofmind/data-driven-framework-go/changelog"
+	"github.com/timeofmind/data-driven-framework-go/expr"
 	"github.com/timeofmind/data-driven-framework-go/generator"
 	"github.com/timeofmind/data-driven-framework-go/listener"
 	"github.com/timeofmind/data-driven-framework-go/listener/appbuilder"
@@ -116,6 +117,7 @@ type App struct {
 	memberPictures pictureQuota
 	cfg            Config
 	man            *Manifest
+	mediaLibrary   *expr.Expr      // the manifest's media_library rule, parsed
 	uploads        *runtime.Handle // the upload view's class, if any
 	Model          *model.Model
 	Reg            *runtime.Registry
@@ -533,15 +535,21 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 		return fail(err)
 	}
 	a.engine.Signer = a.signer
+	if man.MediaLibrary != "" {
+		if a.mediaLibrary, err = expr.Parse(man.MediaLibrary); err != nil {
+			return fail(fmt.Errorf("app.yaml: media_library: %w", err))
+		}
+	}
 	a.engine.Pay, a.engine.PayPath, a.engine.Shop = a.payOffer, payPath, a.shopValues
 	a.site, err = webux.New(webux.Options{
 		Engine: a.engine, Name: man.Name, Tagline: man.Tagline, Nav: man.Nav, ThemeDir: man.ThemeDir(), MobileDir: man.MobileDir(),
 		Signup: a.auth != nil && man.signupEnabled(), Reset: a.resetEnabled(), Log: cfg.Logger,
 		Upload: a.uploadView, UploadInfo: a.uploadInfo, AdminSections: adminSections, AdminNotices: a.adminNotices, AdminSectionShown: a.adminSectionShown,
-		SolverScript: cfg.BotDefence,
-		Staging:      stagingBanner(cfg.Staging),
-		StagingLink:  stagingLink(cfg.Staging),
-		MemberImages: func(rq *webux.Request) bool { return a.memberImages(rq.Viewer) },
+		SolverScript:  cfg.BotDefence,
+		Staging:       stagingBanner(cfg.Staging),
+		StagingLink:   stagingLink(cfg.Staging),
+		MemberImages:  func(rq *webux.Request) bool { return a.memberImages(rq.Viewer) },
+		MemberLibrary: func(rq *webux.Request) bool { return a.memberLibrary(rq.R.Context(), rq.Viewer) },
 		SignedOut: func(rq *webux.Request) {
 			if rq.Viewer != nil {
 				a.endAllSessions(rq.R.Context(), rq.Viewer.ID)
@@ -1172,6 +1180,10 @@ func origin(u string) string {
 	return p.Scheme + "://" + p.Host
 }
 
+// videoHosts are the players formatted text's videos are drawn from
+// (value.EmbedURL: YouTube's without its cookies, and Vimeo's).
+const videoHosts = "https://www.youtube-nocookie.com https://player.vimeo.com"
+
 // amazonPayHosts are what Amazon Pay's checkout needs on the page: its
 // script (one host per region) in a frame of its own, and Amazon's pages.
 const amazonPayHosts = "https://static-na.payments-amazon.com https://static-eu.payments-amazon.com https://static-fe.payments-amazon.com https://*.payments-amazon.com https://*.amazon.com https://*.amazon.co.uk https://*.amazon.de https://*.amazon.fr https://*.amazon.it https://*.amazon.es https://*.amazon.co.jp"
@@ -1198,11 +1210,11 @@ func (a *App) csp() string {
 		for _, k := range pl.Kinds() {
 			if k == "amazonpay" {
 				return "default-src 'self'; " + img + " " + amazonPayHosts + "; style-src 'self'; script-src 'self' " + amazonPayHosts +
-					"; frame-src " + amazonPayHosts + "; connect-src 'self' " + amazonPayHosts + "; form-action 'self' " + amazonPayHosts + "; frame-ancestors 'none'; base-uri 'none'"
+					"; frame-src " + videoHosts + " " + amazonPayHosts + "; connect-src 'self' " + amazonPayHosts + "; form-action 'self' " + amazonPayHosts + "; frame-ancestors 'none'; base-uri 'none'"
 			}
 		}
 	}
-	return "default-src 'self'; " + img + "; style-src 'self'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+	return "default-src 'self'; " + img + "; style-src 'self'; script-src 'self'; frame-src " + videoHosts + "; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 }
 
 // How soon a settle that failed is tried again, doubling up to the most.
