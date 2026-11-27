@@ -6,7 +6,7 @@ require (
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/muktihari/fit v0.28.5
 	github.com/spf13/cobra v1.10.2
-	github.com/timeofmind/data-driven-framework-go v0.66.0
+	github.com/timeofmind/data-driven-framework-go v0.67.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -56,6 +56,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.5 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/go-pdf/fpdf v0.9.0 // indirect
 	github.com/go-sql-driver/mysql v1.10.1 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
