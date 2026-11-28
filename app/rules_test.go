@@ -137,7 +137,11 @@ func TestReschedule(t *testing.T) {
 	if strings.Count(cal, `draggable="true"`) != 1 || strings.Count(cal, "data-dd-record=") != 2 || !strings.Contains(cal, "/_dd/dd.") {
 		t.Error("meetups are not draggable on the calendar (no drag in its show), but every entry is a row of the client library")
 	}
-	_, js, h := ann.get(strings.Split(strings.Split(cal, `<script src="`)[1], `"`)[0])
+	// the client library's script (the page's first script is stay.js, on every page)
+	_, js, h := ann.get(regexp.MustCompile(`<script src="([^"]*/_dd/dd\.[^"]+)"`).FindStringSubmatch(cal)[1])
+	if _, stay, sh := ann.get(regexp.MustCompile(`<script src="([^"]*/_dd/stay\.[^"]+)"`).FindStringSubmatch(cal)[1]); !strings.Contains(stay, "dd-stay") || !strings.Contains(sh.Get("Cache-Control"), "immutable") {
+		t.Error("stay.js is on the page and served")
+	}
 	if !strings.Contains(js, "data-dd-record") || !strings.Contains(h.Get("Cache-Control"), "immutable") {
 		t.Error("the script is served, cached for good")
 	}
