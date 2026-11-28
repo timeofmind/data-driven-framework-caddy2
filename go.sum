@@ -381,6 +381,8 @@ github.com/tailscale/tscert v0.0.0-20251216020129-aea342f6d747 h1:RnBbFMmodYzhC6
 github.com/tailscale/tscert v0.0.0-20251216020129-aea342f6d747/go.mod h1:ejPAJui3kVK4u5TgMtqtXlWf5HnKh9fLy5kvpaeuas0=
 github.com/timeofmind/data-driven-framework-go v0.69.0 h1:t0Ig59nSVcraWMh0jxVe+4urox1pspXHKW0KrZAeBOk=
 github.com/timeofmind/data-driven-framework-go v0.69.0/go.mod h1:lkkyJ57ADHSIVILcjUX/0L5aDZ2cC3nQgARov79Sx1U=
+github.com/timeofmind/data-driven-framework-go v0.70.0 h1:3Rl1D/nf+lWzDtnsozebppsu7ZeYsnDYiNXbytfMZWM=
+github.com/timeofmind/data-driven-framework-go v0.70.0/go.mod h1:lkkyJ57ADHSIVILcjUX/0L5aDZ2cC3nQgARov79Sx1U=
 github.com/ugorji/go/codec v0.0.0-20181204163529-d75b2dcb6bc8/go.mod h1:VFNgLljTbGfSG7qAOspJ7OScBnGdDN/yBr0sguwnwf0=
 github.com/urfave/cli v1.22.17 h1:SYzXoiPfQjHBbkYxbew5prZHS1TOLT3ierW8SYLqtVQ=
 github.com/urfave/cli v1.22.17/go.mod h1:b0ht0aqgH/6pBYzzxURyrM4xXNgsoT/n2ZzwQiEhNVo=
