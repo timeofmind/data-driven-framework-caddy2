@@ -226,7 +226,7 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("datadriven: database: %w", err)
 	}
-	reg.Location = loc // "today" in the model's rules
+	reg.SetLocation(loc) // "today" in the model's rules, and every stamp
 	for name, l := range reg.Listeners {
 		if !l.Caps().Schema {
 			continue
