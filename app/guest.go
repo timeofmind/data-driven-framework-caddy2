@@ -84,7 +84,11 @@ func (a *App) sweepGuests(ctx context.Context) {
 		return
 	}
 	au := a.auth.Class.Auth
-	cut := time.Now().UTC().Add(-keep).Format(timeLayout)
+	loc := a.Reg.Location // the stamps are the app's clock (framework v0.71.3), not UTC
+	if loc == nil {
+		loc = time.UTC
+	}
+	cut := time.Now().In(loc).Add(-keep).Format(timeLayout)
 	old, _ := a.auth.List(ctx, runtime.Query{Where: []runtime.Cond{{Field: au.Guest, Op: "notnull"}, {Field: "updated_at", Op: "<", Value: cut}}, Limit: 20})
 	for _, g := range old {
 		a.endAllSessions(ctx, g.ID())
