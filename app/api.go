@@ -225,11 +225,38 @@ func (a *App) apiQuery(rq *request) (runtime.Query, error) {
 	vals := rq.r.URL.Query()
 	var q runtime.Query
 	for key, vs := range vals {
-		s := c.Slot(key)
-		if s == nil || len(vs) == 0 || vs[0] == "" {
+		if len(vs) == 0 || vs[0] == "" {
 			continue
 		}
-		if c.BelongsToVia(key) == nil && s.Type != "enum" && s.Type != "boolean" && s.Type != "date" {
+		// slot__contains=text: a string or text slot holding it (a wiki page's
+		// links to another: body__contains=/wiki/rowing); slot__in=a,b,c: one
+		// of the values (a slot filterable by equality). Never a slot private
+		// to its owner.
+		if name, ok := strings.CutSuffix(key, "__contains"); ok {
+			if s := c.Slot(name); s != nil && publicSlot(s) && (s.Type == "string" || s.Type == "text") {
+				pat := strings.NewReplacer("%", "", "_", "").Replace(vs[0])
+				if strings.TrimSpace(pat) != "" {
+					q.Where = append(q.Where, runtime.Cond{Field: name, Op: "like", Value: "%" + pat + "%"})
+				}
+			}
+			continue
+		}
+		if name, ok := strings.CutSuffix(key, "__in"); ok {
+			if s := c.Slot(name); s != nil && publicSlot(s) && equalityFilter(c, s) {
+				var in []any
+				for _, p := range strings.Split(vs[0], ",") {
+					if v, err := runtime.Coerce(s, strings.TrimSpace(p)); err == nil && len(in) < 100 {
+						in = append(in, v)
+					}
+				}
+				if len(in) > 0 {
+					q.Where = append(q.Where, runtime.Cond{Field: name, Op: "in", Value: in})
+				}
+			}
+			continue
+		}
+		s := c.Slot(key)
+		if s == nil || !equalityFilter(c, s) || (s.Type == "string" && !publicSlot(s)) {
 			continue
 		}
 		v, err := runtime.Coerce(s, vs[0])
@@ -450,4 +477,27 @@ func writeJSON(rq *request, status int, v any) error {
 	rq.w.WriteHeader(status)
 	rq.w.Write(buf.Bytes())
 	return nil
+}
+
+// equalityFilter: the API filters a class's records by s's value — a link,
+// an enum, a boolean, a date, or a string unique on its own (a slug).
+func equalityFilter(c *model.Class, s *model.Slot) bool {
+	if c.BelongsToVia(s.Name) != nil || s.Type == "enum" || s.Type == "boolean" || s.Type == "date" {
+		return true
+	}
+	if s.Type == "string" {
+		for _, k := range c.UniqueConstraints() {
+			if len(k.Columns) == 1 && k.Columns[0] == s.Name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// publicSlot: s's value is anyone's to read (not owner-only, not hidden
+// while private_when holds, not a password), so filtering by it reveals
+// nothing.
+func publicSlot(s *model.Slot) bool {
+	return s.Type != "password" && s.Read != "owner" && s.PrivateWhen == nil
 }

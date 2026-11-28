@@ -447,6 +447,30 @@ func TestAPI(t *testing.T) {
 		t.Errorf("computed pace: %v", out["pace"])
 	}
 	id := itoa(int64(out["id"].(float64)))
+	// slot__contains and slot__in; never on a slot private to its owner.
+	do("POST", "/api/v1/walks", `{"day":"2026-11-03","title":"Dinner ride"}`, me.CSRF)
+	do("POST", "/api/v1/walks", `{"day":"2026-11-04","title":"Hill"}`, me.CSRF)
+	total := func(path string) float64 {
+		t.Helper()
+		_, out := do("GET", path, "", "")
+		n, _ := out["total"].(float64)
+		return n
+	}
+	if n := total("/api/v1/walks?title__contains=inne"); n != 1 {
+		t.Errorf("title__contains: %v", n)
+	}
+	if n := total("/api/v1/walks?title__contains=%25"); n != 3 {
+		t.Errorf("a wildcard alone filters nothing: %v", n)
+	}
+	if n := total("/api/v1/walks?day__in=2026-11-02,2026-11-04"); n != 2 {
+		t.Errorf("day__in: %v", n)
+	}
+	if n := total("/api/v1/walks?title__in=Lunch,Hill"); n != 3 {
+		t.Errorf("__in on a slot not filterable by equality filters nothing: %v", n)
+	}
+	if n, all := total("/api/v1/members?email__contains=nobody-has-this"), total("/api/v1/members"); n != all {
+		t.Errorf("email (read: owner) filtered: %v of %v", n, all)
+	}
 	if code, out := do("PATCH", "/api/v1/walks/"+id, `{"distance_km":-3}`, me.CSRF); code != 422 || out["fields"] == nil {
 		t.Errorf("validation: %d %v", code, out)
 	}
