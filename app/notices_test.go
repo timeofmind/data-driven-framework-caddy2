@@ -54,7 +54,16 @@ func TestAdminNoticeWhenTheDatabaseRefuses(t *testing.T) {
 	}
 	newBrowser(t, srv).signup("bea@example.com", "Bea") // saved: kept in the log, refused by the database
 	wait("the admin area to say the database refuses", true)
-	if _, body, _ := owner.get("/admin/services"); !strings.Contains(body, "the table will not take it") || !strings.Contains(body, "Nothing is lost") {
+	// the notice names the database's reason once the refusal is recorded (the
+	// first notice may come before it: wait for it, as for the notice)
+	var body string
+	for i := 0; i < 400; i++ {
+		if _, body, _ = owner.get("/admin/services"); strings.Contains(body, "the table will not take it") && strings.Contains(body, "Nothing is lost") {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if !strings.Contains(body, "the table will not take it") || !strings.Contains(body, "Nothing is lost") {
 		t.Fatalf("what the notice says:\n%s", body)
 	}
 	if _, body, _ := owner.get("/"); strings.Contains(body, "Saved changes are not reaching") {
